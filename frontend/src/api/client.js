@@ -1,18 +1,59 @@
-const API = '/api';
+const API = import.meta.env.VITE_API_URL || '/api';
+const TOKEN_KEY = 'bombastic_token';
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
 
 async function request(path, options = {}) {
-  const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  });
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API}${path}`, { ...options, headers });
   const data = await res.json().catch(() => null);
+
+  if (res.status === 401 && !path.startsWith('/auth/login')) {
+    clearToken();
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login';
+    }
+  }
+
   if (!res.ok) throw new Error(data?.error || 'Error en la solicitud');
   return data;
 }
 
 export const api = {
+  auth: {
+    login: (usuario, password) =>
+      request('/auth/login', { method: 'POST', body: JSON.stringify({ usuario, password }) }),
+    me: () => request('/auth/me'),
+  },
+
   dashboard: () => request('/dashboard'),
   reporte: (desde, hasta) => request(`/dashboard/reporte?desde=${desde}&hasta=${hasta}`),
+
+  proveedores: {
+    list: () => request('/proveedores'),
+    create: (data) => request('/proveedores', { method: 'POST', body: JSON.stringify(data) }),
+  },
+
+  clientes: {
+    list: () => request('/clientes'),
+    create: (data) => request('/clientes', { method: 'POST', body: JSON.stringify(data) }),
+  },
 
   compras: {
     list: (params = {}) => request(`/compras?${new URLSearchParams(params)}`),
@@ -29,7 +70,11 @@ export const api = {
     create: (data) => request('/inventario', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/inventario/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id) => request(`/inventario/${id}`, { method: 'DELETE' }),
-    abrirCaja: (id, autos) => request(`/inventario/${id}/abrir-caja`, { method: 'POST', body: JSON.stringify({ autos }) }),
+    abrirCaja: (id, payload) =>
+      request(`/inventario/${id}/abrir-caja`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
   },
 
   ventas: {
@@ -55,7 +100,22 @@ export const api = {
     cerrar: (data) => request('/caja/cerrar', { method: 'POST', body: JSON.stringify(data) }),
   },
 
-  backup: () => window.open(`${API}/backup/backup`, '_blank'),
+  backup: () => {
+    const token = getToken();
+    const url = `${API}/backup/backup${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    // Para download con auth usamos fetch + blob
+    fetch(`${API}/backup/backup`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `bombastic-backup-${Date.now()}.json`;
+        a.click();
+      })
+      .catch((e) => alert(e.message));
+  },
   exportCsv: (tabla) => window.open(`${API}/backup/export/${tabla}`, '_blank'),
 };
 

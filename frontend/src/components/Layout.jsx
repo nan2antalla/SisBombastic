@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊' },
@@ -12,6 +13,8 @@ const navItems = [
 ];
 
 export default function Layout() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -21,6 +24,12 @@ export default function Layout() {
 
   const closeMenu = () => setMenuOpen(false);
 
+  const handleLogout = () => {
+    logout();
+    closeMenu();
+    navigate('/login');
+  };
+
   const sidebar = (
     <>
       <div className="p-4 border-b border-[#2a2a2a] flex items-center gap-3">
@@ -28,6 +37,7 @@ export default function Layout() {
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-2xl leading-none text-[#ffcc00]">BOMBASTIC</h1>
           <p className="text-[11px] text-gray-400 tracking-[0.2em] uppercase mt-0.5">Dreamers</p>
+          {user?.usuario && <p className="text-xs text-gray-500 mt-2">👤 {user.usuario}</p>}
         </div>
         <button
           type="button"
@@ -65,13 +75,18 @@ export default function Layout() {
         >
           💾 Backup BD
         </button>
+        <button
+          onClick={handleLogout}
+          className="w-full text-left px-3 py-3 text-xs text-gray-500 hover:text-[#ffcc00] rounded-lg hover:bg-[#1a1a1a] transition-colors min-h-[44px]"
+        >
+          🚪 Cerrar sesión
+        </button>
       </div>
     </>
   );
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
-      {/* Top bar móvil */}
       <header className="lg:hidden sticky top-0 z-40 flex items-center gap-3 px-4 py-3 bg-black border-b border-[#2a2a2a]">
         <button
           type="button"
@@ -88,7 +103,6 @@ export default function Layout() {
         </div>
       </header>
 
-      {/* Overlay móvil */}
       {menuOpen && (
         <div
           className="lg:hidden fixed inset-0 z-50 bg-black/70"
@@ -97,7 +111,6 @@ export default function Layout() {
         />
       )}
 
-      {/* Sidebar: drawer en móvil, fijo en desktop */}
       <aside
         className={`
           fixed lg:static inset-y-0 left-0 z-50 w-[min(18rem,85vw)] bg-black text-white

@@ -1,108 +1,135 @@
-# Bombastic Dreamers — Sistema de Administración Local
+# Bombastic Dreamers — Versión Online
 
-Sistema local para administrar tu negocio de venta de Hot Wheels. Funciona sin internet en tu propia máquina.
+Frontend en **Netlify** + Backend y base de datos en **Render** (PostgreSQL).
 
-## Requisitos
+## Estructura
 
-- [Node.js](https://nodejs.org/) 18 o superior
-
-## Instalación
-
-```bash
-# Desde la carpeta del proyecto
-npm run install:all
+```
+1_ESTO_PARA_ONLINE/
+├── frontend/     → Netlify (React)
+├── backend/        → Render (Express + PostgreSQL)
+├── netlify.toml    → Config Netlify
+└── render.yaml     → Blueprint Render
 ```
 
-## Uso diario
+## Paso 1: Subir backend a Render
+
+> **¿Te sale "cannot have more than one active free tier database"?**  
+> Render solo permite **1 Postgres gratis** por cuenta. Ve a la sección **"Si ya tienes una base gratis"** más abajo.
+
+### Opción A — Blueprint completo (solo si NO tienes otra base gratis)
+
+1. Crea cuenta en [render.com](https://render.com)
+2. Sube esta carpeta a GitHub
+3. En Render: **New → Blueprint** y selecciona `render.yaml`
+4. Variables de entorno en Render:
+   - `DATABASE_URL` → la conexión de tu Postgres (Render la genera)
+   - `CORS_ORIGIN` → URL de Netlify (ej: `https://bombastic-dreamers.netlify.app`)
+   - `NODE_ENV` → `production`
+5. Al iniciar, el backend crea las tablas automáticamente
+6. Verifica: `https://TU-API.onrender.com/api/health`
+
+### Opción B — Sin crear base nueva (`render-sin-db.yaml`)
+
+Usa `render-sin-db.yaml` si ya tienes una base gratis en Render o usas **Neon**.
+
+1. **New → Blueprint** → archivo `render-sin-db.yaml`
+2. En el web service **bombastic-api**, agrega manualmente:
+   - `DATABASE_URL` = URL de tu Postgres (ver abajo)
+   - `CORS_ORIGIN` = tu URL de Netlify
+
+### Si ya tienes una base gratis en Render
+
+1. Render Dashboard → **PostgreSQL** (la que ya tienes)
+2. Copia **External Database URL**
+3. **New → Web Service** (no uses Blueprint con base de datos):
+   - Root Directory: `backend` (o `1_ESTO_PARA_ONLINE/backend`)
+   - Build: `npm install` | Start: `npm start`
+4. Environment → `DATABASE_URL` = pega la URL copiada
+5. Deploy → prueba `/api/health`
+
+**O** borra la base gratis vieja que no uses y vuelve a desplegar `render.yaml`.
+
+### Alternativa gratis: Neon (recomendado si Render no te deja otra base)
+
+1. [neon.tech](https://neon.tech) → crea proyecto gratis
+2. Copia la connection string PostgreSQL
+3. En Render web service: `DATABASE_URL` = esa URL
+4. El backend crea las tablas solo al arrancar
+
+Guía detallada: `DEPLOY_RENDER.md`
+
+## Paso 2: Subir frontend a Netlify
+
+1. Crea cuenta en [netlify.com](https://netlify.com)
+2. **Add new site → Import from Git**
+3. Netlify detectará `netlify.toml` automáticamente
+4. Variable de entorno en Netlify:
+   - `VITE_API_URL` = `https://TU-API.onrender.com/api`
+5. Deploy
+
+## Paso 3: Conectar ambos
+
+Después del deploy de Netlify, copia tu URL (ej: `https://bombastic.netlify.app`) y actualiza en Render:
+
+```
+CORS_ORIGIN=https://bombastic.netlify.app
+```
+
+Reinicia el servicio en Render.
+
+## Backup de datos
+
+Desde la app (menú lateral **Backup BD**) o directamente:
+
+```
+https://TU-API.onrender.com/api/backup/backup
+```
+
+Descarga un JSON con todas las tablas. También puedes exportar CSV por tabla:
+
+```
+/api/backup/export/ventas
+/api/backup/export/inventario
+/api/backup/export/compras
+```
+
+Render también guarda backups automáticos de PostgreSQL en planes de pago.
+
+## Desarrollo local
+
+### Backend (necesitas PostgreSQL local o gratis en Neon/Supabase)
 
 ```bash
+cd backend
+cp .env.example .env
+# Edita DATABASE_URL
+npm install
+npm run db:init
 npm run dev
 ```
 
-Esto inicia:
-- **Backend API:** http://localhost:3001
-- **Frontend:** http://localhost:5173
-
-Abre http://localhost:5173 en tu navegador.
-
-## Módulos incluidos (MVP)
-
-| Módulo | Funcionalidad |
-|--------|---------------|
-| **Dashboard** | Ventas, utilidades, caja, inventario, top productos |
-| **Compras** | Registro con costos automáticos, estados, ingreso a inventario |
-| **Inventario** | Stock, búsqueda, abrir cajas cerradas |
-| **Ventas** | Descuento automático de stock, utilidad calculada |
-| **Gastos** | Categorías, impacto en caja |
-| **Caja** | Saldo, movimientos, cierre diario, retiros e inversiones |
-
-## Base de datos
-
-La base SQLite se guarda en `backend/data/bombastic.db`.
-
-### Backup
-
-Desde la app: botón **Backup BD** en el menú lateral, o visita:
-```
-http://localhost:3001/api/backup/backup
-```
-
-### Exportar CSV
-
-```
-http://localhost:3001/api/backup/export/ventas
-http://localhost:3001/api/backup/export/inventario
-http://localhost:3001/api/backup/export/compras
-http://localhost:3001/api/backup/export/gastos
-```
-
-## Flujo recomendado
-
-1. **Registrar compra** → estado "En camino"
-2. Cuando llega → clic en **Recibir** → entra al inventario automáticamente
-3. Si es caja mainline → **Abrir caja** en inventario para crear autos individuales
-4. **Registrar venta** seleccionando producto del inventario → descuenta stock y suma a caja
-5. **Registrar gastos** → descuenta de caja
-6. Al final del día → **Cerrar caja** en el módulo Caja
-
-## Reglas de cálculo
-
-- Costo total = costo producto + transporte + impuestos + otros
-- Costo unitario = costo total / cantidad
-- Utilidad bruta = venta - costo del producto
-- Utilidad neta = ventas - costos - gastos
-- Margen = utilidad / venta × 100
-
-## Producción (una sola app)
+### Frontend
 
 ```bash
-npm run build
-npm start
+cd frontend
+npm install
+# Crea .env con VITE_API_URL=http://localhost:3001/api
+npm run dev
 ```
 
-Abre http://localhost:3001 (sirve frontend + API juntos).
+## Diferencias vs versión local
 
-## Próximas fases
+| | Local (SQLite) | Online (PostgreSQL) |
+|---|---|---|
+| Base de datos | Archivo `.db` en tu PC | PostgreSQL en Render |
+| Internet | No necesario | Sí |
+| Backup | Archivo `.db` | JSON/CSV desde API |
+| Acceso | Solo tu máquina | Desde cualquier navegador |
 
-- Lives de TikTok
-- Clientes
-- Empleados
-- Reportes avanzados
+## Notas importantes
 
-## Estructura del proyecto
-
-```
-SisBombastic/
-├── backend/
-│   ├── src/
-│   │   ├── db/          # SQLite + esquema
-│   │   ├── routes/      # Endpoints API
-│   │   ├── services/    # Lógica de negocio
-│   │   └── utils/       # Cálculos
-│   └── data/            # Base de datos local
-└── frontend/
-    └── src/
-        ├── pages/       # Pantallas
-        ├── components/  # UI reutilizable
-        └── api/         # Cliente HTTP
-```
+- El plan free de Render **duerme** el servidor tras inactividad (~50 seg al despertar)
+- Netlify es gratis y siempre activo para el frontend
+- No subas archivos `.env` a GitHub
+- Mantén la versión local para uso offline; esta es para acceso remoto

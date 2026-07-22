@@ -1,45 +1,64 @@
-import db from '../db/database.js';
+import { getOne, getAll, query, withTransaction } from '../db/database.js';
 import { calcularUtilidadBruta } from '../utils/calculos.js';
 import * as inventarioService from './inventario.service.js';
 import * as cajaService from './caja.service.js';
 
-export function listarVentas(filtros = {}) {
+export async function listarVentas(filtros = {}) {
   let sql = 'SELECT * FROM ventas WHERE 1=1';
   const params = [];
+  let i = 1;
 
-  if (filtros.desde) {
-    sql += ' AND fecha >= ?';
-    params.push(filtros.desde);
-  }
-  if (filtros.hasta) {
-    sql += ' AND fecha <= ?';
-    params.push(filtros.hasta);
-  }
-  if (filtros.estado) {
-    sql += ' AND estado = ?';
-    params.push(filtros.estado);
-  }
+  if (filtros.desde) { sql += ` AND fecha >= $${i++}`; params.push(filtros.desde); }
+  if (filtros.hasta) { sql += ` AND fecha <= $${i++}`; params.push(filtros.hasta); }
+  if (filtros.estado) { sql += ` AND estado = $${i++}`; params.push(filtros.estado); }
 
   sql += ' ORDER BY fecha DESC, id DESC';
-  const ventas = db.prepare(sql).all(...params);
+  const ventas = await getAll(sql, params);
 
-  return ventas.map((v) => ({
+  return Promise.all(ventas.map(async (v) => ({
     ...v,
-    items: db.prepare('SELECT * FROM venta_items WHERE venta_id = ?').all(v.id),
-  }));
+    items: await getAll('SELECT * FROM venta_items WHERE venta_id = $1', [v.id]),
+  })));
 }
 
-export function obtenerVenta(id) {
-  const venta = db.prepare('SELECT * FROM ventas WHERE id = ?').get(id);
+export async function obtenerVenta(id) {
+  const venta = await getOne('SELECT * FROM ventas WHERE id = $1', [id]);
   if (!venta) return null;
   return {
     ...venta,
-    items: db.prepare('SELECT * FROM venta_items WHERE venta_id = ?').all(id),
+    items: await getAll('SELECT * FROM venta_items WHERE venta_id = $1', [id]),
   };
 }
 
-export function crearVenta(data) {
-  const crear = db.transaction(() => {
+export async function crearVenta(data) {
+  if (!data.cliente_nombre && !data.cliente_id) {
+    throw Object.assign(new Error('El cliente es obligatorio'), { status: 400 });
+  }
+  if (!data.metodo_pago) {
+    throw Object.assign(new Error('El método de pago es obligatorio'), { status: 400 });
+  }
+  if (!data.canal) {
+    throw Object.assign(new Error('El canal es obligatorio'), { status: 400 });
+  }
+
+  const { obtenerOCrearPorNombre } = await import('./clientes.service.js');
+  let clienteId = data.cliente_id || null;
+  let clienteNombre = data.cliente_nombre || null;
+
+  if (clienteId) {
+    const c = await getOne('SELECT * FROM clientes WHERE id = $1', [clienteId]);
+    if (c) {
+      clienteNombre = c.nombre;
+    }
+  } else if (clienteNombre) {
+    const c = await obtenerOCrearPorNombre(clienteNombre);
+    if (c) {
+      clienteId = c.id;
+      clienteNombre = c.nombre;
+    }
+  }
+
+  return withTransaction(async (client) => {
     let totalVenta = 0;
     let totalCosto = 0;
     const itemsProcesados = [];
@@ -49,18 +68,18 @@ export function crearVenta(data) {
       let nombreProducto = item.producto_nombre;
 
       if (item.inventario_id) {
-        const inv = inventarioService.obtenerItem(item.inventario_id);
+        const invRes = await client.query('SELECT * FROM inventario WHERE id = $1', [item.inventario_id]);
+        const inv = invRes.rows[0];
         if (!inv) throw new Error(`Producto inventario #${item.inventario_id} no encontrado`);
         costoUnitario = inv.costo_unitario;
         nombreProducto = inv.nombre;
-        inventarioService.descontarStock(item.inventario_id, item.cantidad);
+        await inventarioService.descontarStock(item.inventario_id, item.cantidad, client);
       }
 
       const utilidad = calcularUtilidadBruta(item.precio_venta, costoUnitario, item.cantidad);
       const subtotal = Number(item.precio_venta) * Number(item.cantidad);
-
       totalVenta += subtotal;
-      totalCosto += costoUnitario * item.cantidad;
+      totalCosto += Number(costoUnitario) * Number(item.cantidad);
 
       itemsProcesados.push({
         inventario_id: item.inventario_id || null,
@@ -75,155 +94,141 @@ export function crearVenta(data) {
     totalVenta += Number(data.delivery || 0);
     const utilidadBruta = totalVenta - Number(data.delivery || 0) - totalCosto;
 
-    const result = db.prepare(`
+    const ventaRes = await client.query(`
       INSERT INTO ventas (
         fecha, cliente_id, cliente_nombre, metodo_pago, canal, delivery,
         estado, total_venta, total_costo, utilidad_bruta, live_id, notas
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      data.fecha,
-      data.cliente_id || null,
-      data.cliente_nombre || null,
-      data.metodo_pago || 'efectivo',
-      data.canal || 'presencial',
-      data.delivery || 0,
-      data.estado || 'pagado',
-      totalVenta,
-      totalCosto,
-      utilidadBruta,
-      data.live_id || null,
-      data.notas || null
-    );
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id
+    `, [
+      data.fecha, clienteId, clienteNombre,
+      data.metodo_pago, data.canal, data.delivery || 0,
+      data.estado || 'pagado', totalVenta, totalCosto, utilidadBruta,
+      data.live_id || null, data.notas || null,
+    ]);
 
-    const ventaId = result.lastInsertRowid;
-
-    const insertItem = db.prepare(`
-      INSERT INTO venta_items (venta_id, inventario_id, producto_nombre, cantidad, precio_venta, costo_unitario, utilidad)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
+    const ventaId = ventaRes.rows[0].id;
 
     for (const item of itemsProcesados) {
-      insertItem.run(
-        ventaId,
-        item.inventario_id,
-        item.producto_nombre,
-        item.cantidad,
-        item.precio_venta,
-        item.costo_unitario,
-        item.utilidad
-      );
+      await client.query(`
+        INSERT INTO venta_items (venta_id, inventario_id, producto_nombre, cantidad, precio_venta, costo_unitario, utilidad)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `, [ventaId, item.inventario_id, item.producto_nombre, item.cantidad, item.precio_venta, item.costo_unitario, item.utilidad]);
     }
 
     if (data.estado !== 'cancelado' && data.estado !== 'pendiente') {
-      cajaService.registrarEntradaVenta(ventaId, totalVenta, data.fecha);
+      await cajaService.registrarEntradaVenta(ventaId, totalVenta, data.fecha, client);
     }
 
-    actualizarClienteStats(data.cliente_id, data.cliente_nombre, totalVenta, data.fecha);
+    await actualizarClienteStats(clienteId, clienteNombre, totalVenta, data.fecha, client);
 
     return obtenerVenta(ventaId);
   });
-
-  return crear();
 }
 
-function actualizarClienteStats(clienteId, clienteNombre, monto, fecha) {
+async function actualizarClienteStats(clienteId, clienteNombre, monto, fecha, client) {
+  const run = (t, p) => client.query(t, p);
   if (clienteId) {
-    db.prepare(`
-      UPDATE clientes SET
-        total_comprado = COALESCE(total_comprado, 0) + ?,
-        cantidad_compras = COALESCE(cantidad_compras, 0) + 1,
-        ultima_compra = ?
-      WHERE id = ?
-    `).run(monto, fecha, clienteId);
+    await run(`
+      UPDATE clientes SET total_comprado = COALESCE(total_comprado,0)+$1,
+        cantidad_compras = COALESCE(cantidad_compras,0)+1, ultima_compra=$2 WHERE id=$3
+    `, [monto, fecha, clienteId]);
   } else if (clienteNombre) {
-    const existente = db.prepare('SELECT id FROM clientes WHERE nombre = ?').get(clienteNombre);
-    if (existente) {
-      db.prepare(`
-        UPDATE clientes SET
-          total_comprado = COALESCE(total_comprado, 0) + ?,
-          cantidad_compras = COALESCE(cantidad_compras, 0) + 1,
-          ultima_compra = ?
-        WHERE id = ?
-      `).run(monto, fecha, existente.id);
+    const ex = await run('SELECT id FROM clientes WHERE nombre = $1', [clienteNombre]);
+    if (ex.rows[0]) {
+      await run(`
+        UPDATE clientes SET total_comprado = COALESCE(total_comprado,0)+$1,
+          cantidad_compras = COALESCE(cantidad_compras,0)+1, ultima_compra=$2 WHERE id=$3
+      `, [monto, fecha, ex.rows[0].id]);
     }
   }
 }
 
-export function cancelarVenta(id) {
-  const venta = obtenerVenta(id);
+export async function cancelarVenta(id) {
+  const venta = await obtenerVenta(id);
   if (!venta) return null;
   if (venta.estado === 'cancelado') return venta;
-
-  db.prepare(`UPDATE ventas SET estado = 'cancelado' WHERE id = ?`).run(id);
+  await query(`UPDATE ventas SET estado = 'cancelado' WHERE id = $1`, [id]);
   return obtenerVenta(id);
 }
 
 /**
- * Recalcula costos y utilidades usando el costo actual del inventario.
+ * Recalcula costos y utilidades de ventas usando el costo actual del inventario.
+ * Corrige ventas hechas cuando el costo de la caja aún estaba mal.
  */
-export function recalcularUtilidades() {
-  const ventas = db.prepare(`SELECT id FROM ventas WHERE estado != 'cancelado'`).all();
-  let ventasActualizadas = 0;
-  let itemsActualizados = 0;
+export async function recalcularUtilidades() {
+  return withTransaction(async (client) => {
+    const ventasRes = await client.query(`SELECT id, delivery FROM ventas WHERE estado != 'cancelado'`);
+    let ventasActualizadas = 0;
+    let itemsActualizados = 0;
 
-  const run = db.transaction(() => {
-    for (const venta of ventas) {
-      const items = db.prepare('SELECT * FROM venta_items WHERE venta_id = ?').all(venta.id);
+    for (const venta of ventasRes.rows) {
+      const itemsRes = await client.query('SELECT * FROM venta_items WHERE venta_id = $1', [venta.id]);
       let cambió = false;
 
-      for (const item of items) {
+      for (const item of itemsRes.rows) {
         let nuevoCosto = Number(item.costo_unitario);
 
         if (item.inventario_id) {
-          const inv = db.prepare('SELECT costo_unitario FROM inventario WHERE id = ?').get(item.inventario_id);
-          if (inv) nuevoCosto = Number(inv.costo_unitario);
+          const inv = await client.query('SELECT costo_unitario FROM inventario WHERE id = $1', [item.inventario_id]);
+          if (inv.rows[0]) {
+            nuevoCosto = Number(inv.rows[0].costo_unitario);
+          }
         } else if (item.producto_nombre) {
-          const inv = db.prepare(`
-            SELECT costo_unitario FROM inventario
-            WHERE nombre = ?
-            ORDER BY updated_at DESC, id DESC
-            LIMIT 1
-          `).get(item.producto_nombre);
-          if (inv) nuevoCosto = Number(inv.costo_unitario);
+          const inv = await client.query(
+            `SELECT costo_unitario FROM inventario
+             WHERE nombre = $1
+             ORDER BY updated_at DESC NULLS LAST, id DESC
+             LIMIT 1`,
+            [item.producto_nombre]
+          );
+          if (inv.rows[0]) {
+            nuevoCosto = Number(inv.rows[0].costo_unitario);
+          }
         }
 
         const utilidad = (Number(item.precio_venta) - nuevoCosto) * Number(item.cantidad);
+        totalCosto += nuevoCosto * Number(item.cantidad);
 
         if (nuevoCosto !== Number(item.costo_unitario) || utilidad !== Number(item.utilidad)) {
-          db.prepare('UPDATE venta_items SET costo_unitario = ?, utilidad = ? WHERE id = ?')
-            .run(nuevoCosto, utilidad, item.id);
+          await client.query(
+            `UPDATE venta_items SET costo_unitario = $1, utilidad = $2 WHERE id = $3`,
+            [nuevoCosto, utilidad, item.id]
+          );
           itemsActualizados += 1;
           cambió = true;
         }
       }
 
-      const itemsFresh = db.prepare('SELECT * FROM venta_items WHERE venta_id = ?').all(venta.id);
+      const itemsFresh = await client.query('SELECT * FROM venta_items WHERE venta_id = $1', [venta.id]);
       let totalCostoFinal = 0;
       let utilidadItems = 0;
-      for (const it of itemsFresh) {
+      for (const it of itemsFresh.rows) {
         totalCostoFinal += Number(it.costo_unitario) * Number(it.cantidad);
         utilidadItems += Number(it.utilidad);
       }
 
-      db.prepare('UPDATE ventas SET total_costo = ?, utilidad_bruta = ? WHERE id = ?')
-        .run(totalCostoFinal, utilidadItems, venta.id);
+      await client.query(
+        `UPDATE ventas SET total_costo = $1, utilidad_bruta = $2 WHERE id = $3`,
+        [totalCostoFinal, utilidadItems, venta.id]
+      );
 
       if (cambió) ventasActualizadas += 1;
     }
+
+    return {
+      ok: true,
+      ventas_actualizadas: ventasActualizadas,
+      items_actualizados: itemsActualizados,
+      mensaje: `Se recalcularon ${itemsActualizados} ítems en ${ventasActualizadas} ventas.`,
+    };
   });
-
-  run();
-
-  return {
-    ok: true,
-    ventas_actualizadas: ventasActualizadas,
-    items_actualizados: itemsActualizados,
-    mensaje: `Se recalcularon ${itemsActualizados} ítems en ${ventasActualizadas} ventas.`,
-  };
 }
 
-export function actualizarItemVenta(itemId, data) {
-  const item = db.prepare('SELECT * FROM venta_items WHERE id = ?').get(itemId);
+/**
+ * Actualiza costo/precio de un ítem de venta y recalcula la utilidad de esa venta.
+ */
+export async function actualizarItemVenta(itemId, data) {
+  const item = await getOne('SELECT * FROM venta_items WHERE id = $1', [itemId]);
   if (!item) return null;
 
   const precio = data.precio_venta != null ? Number(data.precio_venta) : Number(item.precio_venta);
@@ -231,13 +236,14 @@ export function actualizarItemVenta(itemId, data) {
   const cantidad = data.cantidad != null ? Number(data.cantidad) : Number(item.cantidad);
   const utilidad = (precio - costo) * cantidad;
 
-  db.prepare(`
-    UPDATE venta_items SET precio_venta = ?, costo_unitario = ?, cantidad = ?, utilidad = ?
-    WHERE id = ?
-  `).run(precio, costo, cantidad, utilidad, itemId);
+  await query(
+    `UPDATE venta_items SET precio_venta=$1, costo_unitario=$2, cantidad=$3, utilidad=$4 WHERE id=$5`,
+    [precio, costo, cantidad, utilidad, itemId]
+  );
 
-  const venta = db.prepare('SELECT * FROM ventas WHERE id = ?').get(item.venta_id);
-  const items = db.prepare('SELECT * FROM venta_items WHERE venta_id = ?').all(item.venta_id);
+  const ventaId = item.venta_id;
+  const items = await getAll('SELECT * FROM venta_items WHERE venta_id = $1', [ventaId]);
+  const venta = await getOne('SELECT * FROM ventas WHERE id = $1', [ventaId]);
 
   let totalCosto = 0;
   let utilidadBruta = 0;
@@ -249,67 +255,56 @@ export function actualizarItemVenta(itemId, data) {
   }
 
   const delivery = Number(venta.delivery || 0);
-  db.prepare(`
-    UPDATE ventas SET total_venta = ?, total_costo = ?, utilidad_bruta = ? WHERE id = ?
-  `).run(totalProductos + delivery, totalCosto, utilidadBruta, item.venta_id);
+  await query(
+    `UPDATE ventas SET total_venta=$1, total_costo=$2, utilidad_bruta=$3 WHERE id=$4`,
+    [totalProductos + delivery, totalCosto, utilidadBruta, ventaId]
+  );
 
-  return obtenerVenta(item.venta_id);
+  return obtenerVenta(ventaId);
 }
 
-export function topProductos(limite = 10, desde, hasta) {
+export async function topProductos(limite = 10, desde, hasta) {
   let sql = `
-    SELECT producto_nombre, SUM(cantidad) as total_vendido, SUM(precio_venta * cantidad) as ingresos, SUM(utilidad) as utilidad
-    FROM venta_items vi
-    JOIN ventas v ON v.id = vi.venta_id
+    SELECT producto_nombre, SUM(cantidad) as total_vendido,
+           SUM(precio_venta * cantidad) as ingresos, SUM(utilidad) as utilidad
+    FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id
     WHERE v.estado != 'cancelado'
   `;
   const params = [];
-
-  if (desde) {
-    sql += ' AND v.fecha >= ?';
-    params.push(desde);
-  }
-  if (hasta) {
-    sql += ' AND v.fecha <= ?';
-    params.push(hasta);
-  }
-
-  sql += ' GROUP BY producto_nombre ORDER BY total_vendido DESC LIMIT ?';
+  let i = 1;
+  if (desde) { sql += ` AND v.fecha >= $${i++}`; params.push(desde); }
+  if (hasta) { sql += ` AND v.fecha <= $${i++}`; params.push(hasta); }
+  sql += ` GROUP BY producto_nombre ORDER BY total_vendido DESC LIMIT $${i}`;
   params.push(limite);
-
-  return db.prepare(sql).all(...params);
+  return getAll(sql, params);
 }
 
-export function ventasDelPeriodo(desde, hasta) {
-  return db.prepare(`
-    SELECT COALESCE(SUM(total_venta), 0) as total,
-           COALESCE(SUM(utilidad_bruta), 0) as utilidad_bruta,
-           COALESCE(SUM(total_costo), 0) as total_costo,
-           COUNT(*) as cantidad
-    FROM ventas
-    WHERE estado != 'cancelado' AND fecha >= ? AND fecha <= ?
-  `).get(desde, hasta);
+export async function ventasDelPeriodo(desde, hasta) {
+  return getOne(`
+    SELECT COALESCE(SUM(total_venta),0) as total, COALESCE(SUM(utilidad_bruta),0) as utilidad_bruta,
+           COALESCE(SUM(total_costo),0) as total_costo, COUNT(*) as cantidad
+    FROM ventas WHERE estado != 'cancelado' AND fecha >= $1 AND fecha <= $2
+  `, [desde, hasta]);
 }
 
-export function autosVendidos(desde, hasta) {
-  const row = db.prepare(`
-    SELECT COALESCE(SUM(vi.cantidad), 0) as total
-    FROM venta_items vi
-    JOIN ventas v ON v.id = vi.venta_id
-    WHERE v.estado != 'cancelado' AND v.fecha >= ? AND v.fecha <= ?
-  `).get(desde, hasta);
-  return row.total;
+export async function autosVendidos(desde, hasta) {
+  const row = await getOne(`
+    SELECT COALESCE(SUM(vi.cantidad),0) as total
+    FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id
+    WHERE v.estado != 'cancelado' AND v.fecha >= $1 AND v.fecha <= $2
+  `, [desde, hasta]);
+  return Number(row?.total || 0);
 }
 
-export function ventasPorDia(desde, hasta) {
-  return db.prepare(`
+export async function ventasPorDia(desde, hasta) {
+  return getAll(`
     SELECT fecha,
            COALESCE(SUM(total_venta), 0) AS ventas,
            COALESCE(SUM(utilidad_bruta), 0) AS utilidad,
            COUNT(*) AS cantidad
     FROM ventas
-    WHERE estado != 'cancelado' AND fecha >= ? AND fecha <= ?
+    WHERE estado != 'cancelado' AND fecha >= $1 AND fecha <= $2
     GROUP BY fecha
     ORDER BY fecha ASC
-  `).all(desde, hasta);
+  `, [desde, hasta]);
 }

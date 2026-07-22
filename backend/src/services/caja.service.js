@@ -1,118 +1,80 @@
-import db from '../db/database.js';
+import { getOne, getAll, query } from '../db/database.js';
 
-export function listarMovimientos(filtros = {}) {
+export async function listarMovimientos(filtros = {}) {
   let sql = 'SELECT * FROM caja_movimientos WHERE 1=1';
   const params = [];
-
-  if (filtros.desde) {
-    sql += ' AND fecha >= ?';
-    params.push(filtros.desde);
-  }
-  if (filtros.hasta) {
-    sql += ' AND fecha <= ?';
-    params.push(filtros.hasta);
-  }
-
+  let i = 1;
+  if (filtros.desde) { sql += ` AND fecha >= $${i++}`; params.push(filtros.desde); }
+  if (filtros.hasta) { sql += ` AND fecha <= $${i++}`; params.push(filtros.hasta); }
   sql += ' ORDER BY fecha DESC, id DESC';
-  return db.prepare(sql).all(...params);
+  return getAll(sql, params);
 }
 
-export function saldoActual() {
-  const row = db.prepare(`
+export async function saldoActual() {
+  const row = await getOne(`
     SELECT
-      COALESCE(SUM(CASE WHEN tipo IN ('entrada_venta', 'inversion') THEN monto ELSE 0 END), 0) -
-      COALESCE(SUM(CASE WHEN tipo IN ('salida_compra', 'salida_gasto', 'retiro_personal', 'ajuste') THEN monto ELSE 0 END), 0)
-      as saldo
-    FROM caja_movimientos
-  `).get();
-  return row.saldo;
+      COALESCE(SUM(CASE WHEN tipo IN ('entrada_venta','inversion') THEN monto ELSE 0 END),0) -
+      COALESCE(SUM(CASE WHEN tipo IN ('salida_compra','salida_gasto','retiro_personal','ajuste') THEN monto ELSE 0 END),0)
+      as saldo FROM caja_movimientos
+  `);
+  return Number(row?.saldo || 0);
 }
 
-export function registrarEntradaVenta(ventaId, monto, fecha) {
-  db.prepare(`
+export async function registrarEntradaVenta(ventaId, monto, fecha, client = null) {
+  const run = client ? (t, p) => client.query(t, p) : query;
+  await run(`
     INSERT INTO caja_movimientos (fecha, tipo, monto, descripcion, referencia_tipo, referencia_id)
-    VALUES (?, 'entrada_venta', ?, ?, 'venta', ?)
-  `).run(fecha, monto, `Venta #${ventaId}`, ventaId);
+    VALUES ($1,'entrada_venta',$2,$3,'venta',$4)
+  `, [fecha, monto, `Venta #${ventaId}`, ventaId]);
 }
 
-export function registrarSalidaGasto(gastoId, monto, fecha, descripcion) {
-  db.prepare(`
+export async function registrarSalidaGasto(gastoId, monto, fecha, descripcion, client = null) {
+  const run = client ? (t, p) => client.query(t, p) : query;
+  await run(`
     INSERT INTO caja_movimientos (fecha, tipo, monto, descripcion, referencia_tipo, referencia_id)
-    VALUES (?, 'salida_gasto', ?, ?, 'gasto', ?)
-  `).run(fecha, monto, descripcion || `Gasto #${gastoId}`, gastoId);
+    VALUES ($1,'salida_gasto',$2,$3,'gasto',$4)
+  `, [fecha, monto, descripcion || `Gasto #${gastoId}`, gastoId]);
 }
 
-export function registrarSalidaCompra(compraId, monto, fecha, descripcion) {
-  db.prepare(`
+export async function registrarMovimiento(data) {
+  const res = await query(`
     INSERT INTO caja_movimientos (fecha, tipo, monto, descripcion, referencia_tipo, referencia_id)
-    VALUES (?, 'salida_compra', ?, ?, 'compra', ?)
-  `).run(fecha, monto, descripcion || `Compra #${compraId}`, compraId);
+    VALUES ($1,$2,$3,$4,$5,$6) RETURNING id
+  `, [
+    data.fecha, data.tipo, data.monto, data.descripcion || null,
+    data.referencia_tipo || null, data.referencia_id || null,
+  ]);
+  return getOne('SELECT * FROM caja_movimientos WHERE id = $1', [res.rows[0].id]);
 }
 
-export function registrarMovimiento(data) {
-  const result = db.prepare(`
-    INSERT INTO caja_movimientos (fecha, tipo, monto, descripcion, referencia_tipo, referencia_id)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    data.fecha,
-    data.tipo,
-    data.monto,
-    data.descripcion || null,
-    data.referencia_tipo || null,
-    data.referencia_id || null
-  );
+export async function resumenCaja(fecha) {
+  const movimientos = await getAll('SELECT * FROM caja_movimientos WHERE fecha = $1 ORDER BY id', [fecha]);
+  const entradas = movimientos.filter((m) => ['entrada_venta', 'inversion'].includes(m.tipo)).reduce((s, m) => s + Number(m.monto), 0);
+  const salidas = movimientos.filter((m) => ['salida_compra', 'salida_gasto', 'retiro_personal', 'ajuste'].includes(m.tipo)).reduce((s, m) => s + Number(m.monto), 0);
+  const cierreAnterior = await getOne('SELECT saldo_final FROM caja_cierres WHERE fecha < $1 ORDER BY fecha DESC LIMIT 1', [fecha]);
+  const saldoInicial = Number(cierreAnterior?.saldo_final || 0);
 
-  return db.prepare('SELECT * FROM caja_movimientos WHERE id = ?').get(result.lastInsertRowid);
+  return { fecha, saldo_inicial: saldoInicial, entradas, salidas, saldo_final: saldoInicial + entradas - salidas, movimientos };
 }
 
-export function resumenCaja(fecha) {
-  const movimientos = db.prepare(`
-    SELECT * FROM caja_movimientos WHERE fecha = ? ORDER BY id
-  `).all(fecha);
+export async function cerrarCaja(fecha, notas) {
+  const resumen = await resumenCaja(fecha);
+  const existente = await getOne('SELECT id FROM caja_cierres WHERE fecha = $1', [fecha]);
 
-  const entradas = movimientos
-    .filter((m) => ['entrada_venta', 'inversion'].includes(m.tipo))
-    .reduce((s, m) => s + m.monto, 0);
-
-  const salidas = movimientos
-    .filter((m) => ['salida_compra', 'salida_gasto', 'retiro_personal', 'ajuste'].includes(m.tipo))
-    .reduce((s, m) => s + m.monto, 0);
-
-  const cierreAnterior = db.prepare(`
-    SELECT saldo_final FROM caja_cierres WHERE fecha < ? ORDER BY fecha DESC LIMIT 1
-  `).get(fecha);
-
-  const saldoInicial = cierreAnterior?.saldo_final ?? 0;
-
-  return {
-    fecha,
-    saldo_inicial: saldoInicial,
-    entradas,
-    salidas,
-    saldo_final: saldoInicial + entradas - salidas,
-    movimientos,
-  };
-}
-
-export function cerrarCaja(fecha, notas) {
-  const resumen = resumenCaja(fecha);
-
-  const existente = db.prepare('SELECT id FROM caja_cierres WHERE fecha = ?').get(fecha);
   if (existente) {
-    db.prepare(`
-      UPDATE caja_cierres SET saldo_inicial = ?, entradas = ?, salidas = ?, saldo_final = ?, notas = ?
-      WHERE fecha = ?
-    `).run(resumen.saldo_inicial, resumen.entradas, resumen.salidas, resumen.saldo_final, notas || null, fecha);
+    await query(`
+      UPDATE caja_cierres SET saldo_inicial=$1, entradas=$2, salidas=$3, saldo_final=$4, notas=$5 WHERE fecha=$6
+    `, [resumen.saldo_inicial, resumen.entradas, resumen.salidas, resumen.saldo_final, notas || null, fecha]);
   } else {
-    db.prepare(`
+    await query(`
       INSERT INTO caja_cierres (fecha, saldo_inicial, entradas, salidas, saldo_final, notas)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(fecha, resumen.saldo_inicial, resumen.entradas, resumen.salidas, resumen.saldo_final, notas || null);
+      VALUES ($1,$2,$3,$4,$5,$6)
+    `, [fecha, resumen.saldo_inicial, resumen.entradas, resumen.salidas, resumen.saldo_final, notas || null]);
   }
 
-  return db.prepare('SELECT * FROM caja_cierres WHERE fecha = ?').get(fecha);
+  return getOne('SELECT * FROM caja_cierres WHERE fecha = $1', [fecha]);
 }
 
-export function listarCierres() {
-  return db.prepare('SELECT * FROM caja_cierres ORDER BY fecha DESC').all();
+export async function listarCierres() {
+  return getAll('SELECT * FROM caja_cierres ORDER BY fecha DESC');
 }

@@ -1,50 +1,31 @@
 import { Router } from 'express';
 import * as dashboardService from '../services/dashboard.service.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  try {
-    res.json(dashboardService.obtenerDashboardDecisiones());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+router.get('/', asyncHandler(async (req, res) => {
+  res.json(await dashboardService.obtenerDashboardDecisiones());
+}));
 
-router.get('/decisiones', (req, res) => {
-  try {
-    res.json(dashboardService.obtenerDashboardDecisiones());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+router.get('/decisiones', asyncHandler(async (req, res) => {
+  res.json(await dashboardService.obtenerDashboardDecisiones());
+}));
 
-router.get('/cajas', (req, res) => {
-  try {
-    res.json(dashboardService.rentabilidadPorCaja());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+router.get('/cajas', asyncHandler(async (req, res) => {
+  res.json(await dashboardService.rentabilidadPorCaja());
+}));
 
-router.get('/proveedores', (req, res) => {
-  try {
-    res.json(dashboardService.rentabilidadPorProveedor());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+router.get('/proveedores', asyncHandler(async (req, res) => {
+  res.json(await dashboardService.rentabilidadPorProveedor());
+}));
 
-router.get('/reporte', (req, res) => {
+router.get('/reporte', asyncHandler(async (req, res) => {
   const { desde, hasta } = req.query;
   if (!desde || !hasta) {
     return res.status(400).json({ error: 'Se requieren fechas desde y hasta' });
   }
-  try {
-    res.json(dashboardService.obtenerReporte(desde, hasta));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  res.json(await dashboardService.obtenerReporte(desde, hasta));
+}));
 
 export default router;

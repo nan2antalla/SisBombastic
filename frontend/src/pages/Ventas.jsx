@@ -12,14 +12,18 @@ const emptyItem = { inventario_id: '', producto_nombre: '', cantidad: 1, precio_
 export default function Ventas() {
   const [ventas, setVentas] = useState([]);
   const [inventario, setInventario] = useState([]);
+  const [clientes, setClientes] = useState([]);
   const [modal, setModal] = useState(false);
   const [detalle, setDetalle] = useState(null);
+  const [nuevoClienteModal, setNuevoClienteModal] = useState(false);
+  const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', whatsapp: '', ciudad: '' });
   const [recalcLoading, setRecalcLoading] = useState(false);
   const [form, setForm] = useState({
     fecha: hoy(),
+    cliente_id: '',
     cliente_nombre: '',
-    metodo_pago: 'efectivo',
-    canal: 'presencial',
+    metodo_pago: '',
+    canal: '',
     delivery: '',
     estado: 'pagado',
     notas: '',
@@ -28,17 +32,21 @@ export default function Ventas() {
   const [error, setError] = useState('');
 
   const load = () => api.ventas.list().then(setVentas).catch(console.error);
+  const loadClientes = () => api.clientes.list().then(setClientes).catch(console.error);
+
   useEffect(() => {
     load();
+    loadClientes();
     api.inventario.list({ estado: 'disponible' }).then(setInventario).catch(console.error);
   }, []);
 
   const openNew = () => {
     setForm({
       fecha: hoy(),
+      cliente_id: '',
       cliente_nombre: '',
-      metodo_pago: 'efectivo',
-      canal: 'presencial',
+      metodo_pago: '',
+      canal: '',
       delivery: '',
       estado: 'pagado',
       notas: '',
@@ -95,9 +103,24 @@ export default function Ventas() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (!form.cliente_id) {
+      setError('Debes seleccionar un cliente');
+      return;
+    }
+    if (!form.metodo_pago) {
+      setError('Debes seleccionar el método de pago');
+      return;
+    }
+    if (!form.canal) {
+      setError('Debes seleccionar el canal');
+      return;
+    }
     try {
+      const cliente = clientes.find((c) => String(c.id) === String(form.cliente_id));
       await api.ventas.create({
         ...form,
+        cliente_id: Number(form.cliente_id),
+        cliente_nombre: cliente?.nombre || form.cliente_nombre,
         delivery: Number(form.delivery || 0),
         items: form.items.map((i) => ({
           inventario_id: i.inventario_id ? Number(i.inventario_id) : null,
@@ -109,9 +132,23 @@ export default function Ventas() {
       });
       setModal(false);
       load();
+      loadClientes();
       api.inventario.list({ estado: 'disponible' }).then(setInventario);
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handleCrearCliente = async (e) => {
+    e.preventDefault();
+    try {
+      const c = await api.clientes.create(nuevoCliente);
+      await loadClientes();
+      setForm({ ...form, cliente_id: String(c.id), cliente_nombre: c.nombre });
+      setNuevoCliente({ nombre: '', whatsapp: '', ciudad: '' });
+      setNuevoClienteModal(false);
+    } catch (err) {
+      alert(err.message);
     }
   };
 
@@ -159,41 +196,41 @@ export default function Ventas() {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Cliente</th>
-                <th>Productos</th>
-                <th>Total</th>
-                <th>Costo</th>
-                <th>Utilidad</th>
-                <th>Pago</th>
-                <th>Canal</th>
-                <th>Estado</th>
-                <th></th>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Productos</th>
+              <th>Total</th>
+              <th>Costo</th>
+              <th>Utilidad</th>
+              <th>Pago</th>
+              <th>Canal</th>
+              <th>Estado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {pager.pageItems.map((v) => (
+              <tr key={v.id}>
+                <td>{formatDate(v.fecha)}</td>
+                <td>{v.cliente_nombre || '-'}</td>
+                <td>{v.items?.map((i) => i.producto_nombre).join(', ')}</td>
+                <td>{formatMoney(v.total_venta)}</td>
+                <td>{formatMoney(v.total_costo)}</td>
+                <td className="text-green-600">{formatMoney(v.utilidad_bruta)}</td>
+                <td>{labelOf(METODOS_PAGO, v.metodo_pago)}</td>
+                <td>{labelOf(CANALES, v.canal)}</td>
+                <td><Badge label={labelOf(ESTADOS_VENTA, v.estado)} colorClass={badgeClass(ESTADOS_VENTA, v.estado)} /></td>
+                <td>
+                  <button className="btn-secondary text-xs py-1" onClick={() => setDetalle(v)}>Ver / Editar</button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {pager.pageItems.map((v) => (
-                <tr key={v.id}>
-                  <td>{formatDate(v.fecha)}</td>
-                  <td>{v.cliente_nombre || '-'}</td>
-                  <td>{v.items?.map((i) => i.producto_nombre).join(', ')}</td>
-                  <td>{formatMoney(v.total_venta)}</td>
-                  <td>{formatMoney(v.total_costo)}</td>
-                  <td className="text-emerald-400">{formatMoney(v.utilidad_bruta)}</td>
-                  <td>{labelOf(METODOS_PAGO, v.metodo_pago)}</td>
-                  <td>{labelOf(CANALES, v.canal)}</td>
-                  <td><Badge label={labelOf(ESTADOS_VENTA, v.estado)} colorClass={badgeClass(ESTADOS_VENTA, v.estado)} /></td>
-                  <td>
-                    <button className="btn-secondary text-xs !min-h-0 !py-1.5" onClick={() => setDetalle(v)}>Ver / Editar</button>
-                  </td>
-                </tr>
-              ))}
-              {ventas.length === 0 && (
-                <tr><td colSpan={10} className="text-center text-gray-400 py-8">No hay ventas registradas</td></tr>
-              )}
-            </tbody>
+            ))}
+            {ventas.length === 0 && (
+              <tr><td colSpan={10} className="text-center text-gray-400 py-8">No hay ventas registradas</td></tr>
+            )}
+          </tbody>
           </table>
         </div>
         <Pagination {...pager} />
@@ -201,41 +238,69 @@ export default function Ventas() {
 
       <Modal open={modal} onClose={() => setModal(false)} title="Nueva venta" wide>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-red-600 text-sm">{error}</p>}
           <div className="form-grid">
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">Fecha</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Fecha</label>
               <input type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} required />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">Cliente</label>
-              <input value={form.cliente_nombre} onChange={(e) => setForm({ ...form, cliente_nombre: e.target.value })} />
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cliente *</label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  value={form.cliente_id}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const c = clientes.find((x) => String(x.id) === id);
+                    setForm({ ...form, cliente_id: id, cliente_nombre: c?.nombre || '' });
+                  }}
+                  required
+                >
+                  <option value="">Seleccione...</option>
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nombre}</option>
+                  ))}
+                </select>
+                <button type="button" className="btn-secondary whitespace-nowrap" onClick={() => setNuevoClienteModal(true)}>
+                  + Nuevo
+                </button>
+              </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">Método de pago</label>
-              <select value={form.metodo_pago} onChange={(e) => setForm({ ...form, metodo_pago: e.target.value })}>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Método de pago *</label>
+              <select
+                value={form.metodo_pago}
+                onChange={(e) => setForm({ ...form, metodo_pago: e.target.value })}
+                required
+              >
+                <option value="">Seleccione...</option>
                 {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">Canal</label>
-              <select value={form.canal} onChange={(e) => setForm({ ...form, canal: e.target.value })}>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Canal *</label>
+              <select
+                value={form.canal}
+                onChange={(e) => setForm({ ...form, canal: e.target.value })}
+                required
+              >
+                <option value="">Seleccione...</option>
                 {CANALES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">Delivery</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Delivery</label>
               <input type="number" min="0" step="0.01" value={form.delivery} onChange={(e) => setForm({ ...form, delivery: e.target.value })} />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">Estado</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Estado</label>
               <select value={form.estado} onChange={(e) => setForm({ ...form, estado: e.target.value })}>
                 {ESTADOS_VENTA.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
               </select>
             </div>
           </div>
 
-          <div className="border border-[#2a2a2a] rounded-lg p-3 sm:p-4 space-y-3">
+          <div className="border rounded-lg p-3 sm:p-4 space-y-3 border-[#2a2a2a]">
             <h4 className="font-medium text-sm text-[#ffcc00]">Productos</h4>
             {form.items.map((item, idx) => (
               <div key={idx} className="relative grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-end border-b border-[#2a2a2a] pb-3 last:border-0 pr-10">
@@ -304,6 +369,38 @@ export default function Ventas() {
         </form>
       </Modal>
 
+      <Modal open={nuevoClienteModal} onClose={() => setNuevoClienteModal(false)} title="Nuevo cliente">
+        <form onSubmit={handleCrearCliente} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Nombre *</label>
+            <input
+              value={nuevoCliente.nombre}
+              onChange={(e) => setNuevoCliente({ ...nuevoCliente, nombre: e.target.value })}
+              required
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">WhatsApp</label>
+            <input
+              value={nuevoCliente.whatsapp}
+              onChange={(e) => setNuevoCliente({ ...nuevoCliente, whatsapp: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Ciudad</label>
+            <input
+              value={nuevoCliente.ciudad}
+              onChange={(e) => setNuevoCliente({ ...nuevoCliente, ciudad: e.target.value })}
+            />
+          </div>
+          <div className="form-actions">
+            <button type="button" className="btn-secondary" onClick={() => setNuevoClienteModal(false)}>Cancelar</button>
+            <button type="submit" className="btn-primary">Agregar</button>
+          </div>
+        </form>
+      </Modal>
+
       <Modal open={!!detalle} onClose={() => setDetalle(null)} title={`Venta #${detalle?.id || ''}`} wide>
         {detalle && (
           <div className="space-y-4">
@@ -311,62 +408,56 @@ export default function Ventas() {
               <p><strong>Fecha:</strong> {formatDate(detalle.fecha)}</p>
               <p><strong>Cliente:</strong> {detalle.cliente_nombre || '-'}</p>
               <p><strong>Total:</strong> {formatMoney(detalle.total_venta)}</p>
-              <p><strong>Utilidad:</strong> <span className="text-emerald-400">{formatMoney(detalle.utilidad_bruta)}</span></p>
+              <p><strong>Utilidad:</strong> <span className="text-green-600">{formatMoney(detalle.utilidad_bruta)}</span></p>
             </div>
-
-            <p className="text-xs text-gray-500">
-              Puedes corregir el costo unitario de cada producto. La utilidad se recalcula sola.
-            </p>
-
             <div className="table-wrap">
               <table>
-                <thead>
-                  <tr>
-                    <th>Producto</th>
-                    <th>Cant.</th>
-                    <th>Precio</th>
-                    <th>Costo</th>
-                    <th>Utilidad</th>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cant.</th>
+                  <th>Precio</th>
+                  <th>Costo</th>
+                  <th>Utilidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detalle.items?.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.producto_nombre}</td>
+                    <td>{item.cantidad}</td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="w-full max-w-24"
+                        defaultValue={item.precio_venta}
+                        onBlur={(e) => {
+                          if (Number(e.target.value) !== Number(item.precio_venta)) {
+                            handleUpdateItem(item.id, 'precio_venta', e.target.value);
+                          }
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="w-full max-w-24"
+                        defaultValue={item.costo_unitario}
+                        onBlur={(e) => {
+                          if (Number(e.target.value) !== Number(item.costo_unitario)) {
+                            handleUpdateItem(item.id, 'costo_unitario', e.target.value);
+                          }
+                        }}
+                      />
+                    </td>
+                    <td className="text-green-600">{formatMoney(item.utilidad)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {detalle.items?.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.producto_nombre}</td>
-                      <td>{item.cantidad}</td>
-                      <td>
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="w-full max-w-24"
-                          defaultValue={item.precio_venta}
-                          onBlur={(e) => {
-                            if (Number(e.target.value) !== Number(item.precio_venta)) {
-                              handleUpdateItem(item.id, 'precio_venta', e.target.value);
-                            }
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="w-full max-w-24"
-                          defaultValue={item.costo_unitario}
-                          onBlur={(e) => {
-                            if (Number(e.target.value) !== Number(item.costo_unitario)) {
-                              handleUpdateItem(item.id, 'costo_unitario', e.target.value);
-                            }
-                          }}
-                        />
-                      </td>
-                      <td className="text-emerald-400">{formatMoney(item.utilidad)}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                ))}
+              </tbody>
               </table>
             </div>
-
             <div className="form-actions">
               <button className="btn-secondary" onClick={() => setDetalle(null)}>Cerrar</button>
             </div>

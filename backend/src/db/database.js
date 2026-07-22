@@ -1,37 +1,62 @@
-import Database from 'better-sqlite3';
+import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, '../../data');
 
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('localhost')
+    ? false
+    : { rejectUnauthorized: false },
+});
+
+function normalizeRow(row) {
+  if (!row) return row;
+  const out = { ...row };
+  for (const [key, value] of Object.entries(out)) {
+    if (value instanceof Date) {
+      out[key] = value.toISOString().split('T')[0];
+    } else if (typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value)) {
+      out[key] = Number(value);
+    }
+  }
+  return out;
 }
 
-const dbPath = path.join(dataDir, 'bombastic.db');
-const db = new Database(dbPath);
-
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
-db.exec(schema);
-
-// Migraciones ligeras
-const migraciones = [
-  `ALTER TABLE compras ADD COLUMN es_caja INTEGER DEFAULT 1`,
-  `ALTER TABLE clientes ADD COLUMN total_comprado REAL DEFAULT 0`,
-  `ALTER TABLE clientes ADD COLUMN cantidad_compras INTEGER DEFAULT 0`,
-  `ALTER TABLE clientes ADD COLUMN ultima_compra TEXT`,
-];
-for (const sql of migraciones) {
-  try { db.exec(sql); } catch { /* ya aplicada */ }
+export async function query(text, params = []) {
+  return pool.query(text, params);
 }
 
-export default db;
-
-export function getDbPath() {
-  return dbPath;
+export async function getOne(text, params = []) {
+  const res = await pool.query(text, params);
+  return normalizeRow(res.rows[0]) || null;
 }
+
+export async function getAll(text, params = []) {
+  const res = await pool.query(text, params);
+  return res.rows.map(normalizeRow);
+}
+
+export async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function initDb() {
+  const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
+  await pool.query(schema);
+}
+
+export { pool };
