@@ -1,0 +1,475 @@
+import db from '../db/database.js';
+import * as ventasService from './ventas.service.js';
+import * as gastosService from './gastos.service.js';
+import * as inventarioService from './inventario.service.js';
+import * as cajaService from './caja.service.js';
+import { hoy, inicioMes, finMes, calcularMargen, haceDias } from '../utils/calculos.js';
+
+function n(v) {
+  return Number(v || 0);
+}
+
+function recomendacionProveedor({ margen, dias_promedio_venta, utilidad, stock_valor }) {
+  if (utilidad <= 0 && stock_valor > 0) return { nivel: 'malo', texto: 'Revisar: poca o nula utilidad' };
+  if (margen >= 35 && (dias_promedio_venta == null || dias_promedio_venta <= 21)) {
+    return { nivel: 'excelente', texto: 'Seguir comprando' };
+  }
+  if (margen >= 20 && (dias_promedio_venta == null || dias_promedio_venta <= 45)) {
+    return { nivel: 'bueno', texto: 'Mantener con cuidado' };
+  }
+  if (margen < 15 || (dias_promedio_venta != null && dias_promedio_venta > 60)) {
+    return { nivel: 'malo', texto: 'Reducir o dejar de comprar' };
+  }
+  return { nivel: 'regular', texto: 'Observar más tiempo' };
+}
+
+export function rentabilidadPorCaja() {
+  const rows = db.prepare(`
+    WITH hijos AS (
+      SELECT
+        parent_id,
+        COUNT(*) AS autos_totales,
+        SUM(CASE WHEN estado = 'vendido' OR cantidad = 0 THEN 1 ELSE 0 END) AS autos_agotados,
+        SUM(CASE WHEN estado IN ('disponible','reservado') AND cantidad > 0 THEN 1 ELSE 0 END) AS autos_stock,
+        COALESCE(SUM(costo_unitario), 0) AS costo_autos,
+        COALESCE(SUM(CASE WHEN estado IN ('disponible','reservado') THEN cantidad * costo_unitario ELSE 0 END), 0) AS valor_stock
+      FROM inventario
+      WHERE parent_id IS NOT NULL
+      GROUP BY parent_id
+    ),
+    ventas_hijos AS (
+      SELECT
+        i.parent_id,
+        COALESCE(SUM(vi.precio_venta * vi.cantidad), 0) AS ingresos,
+        COALESCE(SUM(vi.costo_unitario * vi.cantidad), 0) AS costo_vendido,
+        COALESCE(SUM(vi.utilidad), 0) AS utilidad,
+        COALESCE(SUM(vi.cantidad), 0) AS unidades_vendidas,
+        AVG(julianday(v.fecha) - julianday(i.fecha_ingreso)) AS dias_promedio
+      FROM venta_items vi
+      JOIN ventas v ON v.id = vi.venta_id AND v.estado != 'cancelado'
+      JOIN inventario i ON i.id = vi.inventario_id
+      WHERE i.parent_id IS NOT NULL
+      GROUP BY i.parent_id
+    )
+    SELECT
+      c.id,
+      c.codigo_interno,
+      c.nombre,
+      c.proveedor_nombre,
+      c.fecha_ingreso,
+      c.costo_unitario AS costo_caja,
+      c.cantidad AS cajas_restantes,
+      c.estado,
+      COALESCE(h.autos_totales, 0) AS autos_totales,
+      COALESCE(h.autos_stock, 0) AS autos_en_stock,
+      COALESCE(vh.unidades_vendidas, 0) AS unidades_vendidas,
+      COALESCE(vh.ingresos, 0) AS ingresos,
+      COALESCE(vh.costo_vendido, 0) AS costo_vendido,
+      COALESCE(vh.utilidad, 0) AS utilidad,
+      COALESCE(h.valor_stock, 0) AS valor_stock,
+      vh.dias_promedio
+    FROM inventario c
+    LEFT JOIN hijos h ON h.parent_id = c.id
+    LEFT JOIN ventas_hijos vh ON vh.parent_id = c.id
+    WHERE c.tipo_item = 'caja_cerrada'
+       OR h.parent_id IS NOT NULL
+    ORDER BY utilidad DESC, c.fecha_ingreso DESC
+  `).all();
+
+  return rows.map((r) => {
+    const ingresos = n(r.ingresos);
+    const costoCaja = n(r.costo_caja);
+    const utilidad = n(r.utilidad);
+    const margen = calcularMargen(utilidad, ingresos);
+    const roi = costoCaja > 0 ? (utilidad / costoCaja) * 100 : 0;
+    const autosTotales = n(r.autos_totales);
+    const vendidos = n(r.unidades_vendidas);
+    const pctVendido = autosTotales > 0 ? (vendidos / autosTotales) * 100 : 0;
+
+    return {
+      ...r,
+      costo_caja: costoCaja,
+      ingresos,
+      utilidad,
+      margen,
+      roi,
+      pct_vendido: pctVendido,
+      dias_promedio_venta: r.dias_promedio != null ? Math.round(n(r.dias_promedio)) : null,
+      recuperado: ingresos >= costoCaja,
+      generacion_neta: utilidad,
+    };
+  });
+}
+
+export function rentabilidadPorProveedor() {
+  const rows = db.prepare(`
+    WITH nombres AS (
+      SELECT DISTINCT COALESCE(proveedor_nombre, 'Sin proveedor') AS proveedor FROM compras
+      UNION
+      SELECT DISTINCT COALESCE(proveedor_nombre, 'Sin proveedor') FROM inventario
+      UNION
+      SELECT DISTINCT COALESCE(i.proveedor_nombre, 'Sin proveedor')
+      FROM venta_items vi
+      LEFT JOIN inventario i ON i.id = vi.inventario_id
+    ),
+    compras_prov AS (
+      SELECT
+        COALESCE(proveedor_nombre, 'Sin proveedor') AS proveedor,
+        COALESCE(SUM(costo_total), 0) AS total_comprado,
+        COUNT(*) AS num_compras,
+        MIN(fecha) AS primera_compra,
+        MAX(fecha) AS ultima_compra
+      FROM compras
+      GROUP BY 1
+    ),
+    inv_prov AS (
+      SELECT
+        COALESCE(proveedor_nombre, 'Sin proveedor') AS proveedor,
+        COALESCE(SUM(CASE WHEN estado IN ('disponible','reservado') THEN cantidad * costo_unitario ELSE 0 END), 0) AS valor_stock,
+        COALESCE(SUM(CASE WHEN estado IN ('disponible','reservado') THEN cantidad ELSE 0 END), 0) AS unidades_stock
+      FROM inventario
+      GROUP BY 1
+    ),
+    ventas_prov AS (
+      SELECT
+        COALESCE(i.proveedor_nombre, 'Sin proveedor') AS proveedor,
+        COALESCE(SUM(vi.precio_venta * vi.cantidad), 0) AS ingresos,
+        COALESCE(SUM(vi.costo_unitario * vi.cantidad), 0) AS costo_vendido,
+        COALESCE(SUM(vi.utilidad), 0) AS utilidad,
+        COALESCE(SUM(vi.cantidad), 0) AS unidades_vendidas,
+        AVG(julianday(v.fecha) - julianday(i.fecha_ingreso)) AS dias_promedio,
+        MIN(v.fecha) AS primera_venta,
+        MAX(v.fecha) AS ultima_venta
+      FROM venta_items vi
+      JOIN ventas v ON v.id = vi.venta_id AND v.estado != 'cancelado'
+      LEFT JOIN inventario i ON i.id = vi.inventario_id
+      GROUP BY 1
+    )
+    SELECT
+      n.proveedor,
+      COALESCE(c.total_comprado, 0) AS total_comprado,
+      COALESCE(c.num_compras, 0) AS num_compras,
+      c.primera_compra,
+      c.ultima_compra,
+      COALESCE(i.valor_stock, 0) AS valor_stock,
+      COALESCE(i.unidades_stock, 0) AS unidades_stock,
+      COALESCE(v.ingresos, 0) AS ingresos,
+      COALESCE(v.costo_vendido, 0) AS costo_vendido,
+      COALESCE(v.utilidad, 0) AS utilidad,
+      COALESCE(v.unidades_vendidas, 0) AS unidades_vendidas,
+      v.dias_promedio,
+      v.primera_venta,
+      v.ultima_venta
+    FROM nombres n
+    LEFT JOIN compras_prov c ON c.proveedor = n.proveedor
+    LEFT JOIN inv_prov i ON i.proveedor = n.proveedor
+    LEFT JOIN ventas_prov v ON v.proveedor = n.proveedor
+    ORDER BY utilidad DESC
+  `).all();
+
+  return rows.map((r) => {
+    const ingresos = n(r.ingresos);
+    const utilidad = n(r.utilidad);
+    const totalComprado = n(r.total_comprado);
+    const margen = calcularMargen(utilidad, ingresos);
+    const roi = totalComprado > 0 ? (utilidad / totalComprado) * 100 : 0;
+    const dias = r.dias_promedio != null ? Math.round(n(r.dias_promedio)) : null;
+    const rec = recomendacionProveedor({
+      margen,
+      dias_promedio_venta: dias,
+      utilidad,
+      stock_valor: n(r.valor_stock),
+    });
+
+    return {
+      proveedor: r.proveedor,
+      total_comprado: totalComprado,
+      num_compras: n(r.num_compras),
+      valor_stock: n(r.valor_stock),
+      unidades_stock: n(r.unidades_stock),
+      ingresos,
+      utilidad,
+      unidades_vendidas: n(r.unidades_vendidas),
+      margen,
+      roi,
+      dias_promedio_venta: dias,
+      primera_compra: r.primera_compra,
+      ultima_compra: r.ultima_compra,
+      primera_venta: r.primera_venta,
+      ultima_venta: r.ultima_venta,
+      recomendacion: rec,
+    };
+  });
+}
+
+export function velocidadVentas() {
+  const promedio = db.prepare(`
+    SELECT
+      AVG(julianday(v.fecha) - julianday(i.fecha_ingreso)) AS dias_promedio,
+      MIN(julianday(v.fecha) - julianday(i.fecha_ingreso)) AS dias_min,
+      MAX(julianday(v.fecha) - julianday(i.fecha_ingreso)) AS dias_max,
+      COUNT(*) AS ventas_con_inventario
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id AND v.estado != 'cancelado'
+    JOIN inventario i ON i.id = vi.inventario_id
+    WHERE i.fecha_ingreso IS NOT NULL
+  `).get();
+
+  const masRapidos = db.prepare(`
+    SELECT
+      vi.producto_nombre,
+      AVG(julianday(v.fecha) - julianday(i.fecha_ingreso)) AS dias,
+      SUM(vi.cantidad) AS vendidos,
+      SUM(vi.utilidad) AS utilidad
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id AND v.estado != 'cancelado'
+    JOIN inventario i ON i.id = vi.inventario_id
+    GROUP BY vi.producto_nombre
+    HAVING COUNT(*) >= 1
+    ORDER BY dias ASC
+    LIMIT 8
+  `).all();
+
+  const masLentos = db.prepare(`
+    SELECT
+      vi.producto_nombre,
+      AVG(julianday(v.fecha) - julianday(i.fecha_ingreso)) AS dias,
+      SUM(vi.cantidad) AS vendidos,
+      SUM(vi.utilidad) AS utilidad
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id AND v.estado != 'cancelado'
+    JOIN inventario i ON i.id = vi.inventario_id
+    GROUP BY vi.producto_nombre
+    HAVING COUNT(*) >= 1
+    ORDER BY dias DESC
+    LIMIT 8
+  `).all();
+
+  const porCanal = db.prepare(`
+    SELECT canal, COUNT(*) AS ventas, COALESCE(SUM(total_venta),0) AS total, COALESCE(SUM(utilidad_bruta),0) AS utilidad
+    FROM ventas WHERE estado != 'cancelado'
+    GROUP BY canal ORDER BY total DESC
+  `).all();
+
+  const porPago = db.prepare(`
+    SELECT metodo_pago, COUNT(*) AS ventas, COALESCE(SUM(total_venta),0) AS total, COALESCE(SUM(utilidad_bruta),0) AS utilidad
+    FROM ventas WHERE estado != 'cancelado'
+    GROUP BY metodo_pago ORDER BY total DESC
+  `).all();
+
+  const ticket = db.prepare(`
+    SELECT
+      COALESCE(AVG(total_venta),0) AS ticket_promedio,
+      COALESCE(AVG(utilidad_bruta),0) AS utilidad_promedio,
+      COUNT(*) AS num_ventas
+    FROM ventas WHERE estado != 'cancelado'
+  `).get();
+
+  return {
+    dias_promedio: promedio?.dias_promedio != null ? Math.round(n(promedio.dias_promedio)) : null,
+    dias_min: promedio?.dias_min != null ? Math.round(n(promedio.dias_min)) : null,
+    dias_max: promedio?.dias_max != null ? Math.round(n(promedio.dias_max)) : null,
+    mas_rapidos: masRapidos.map((r) => ({
+      ...r,
+      dias: r.dias != null ? Math.round(n(r.dias)) : null,
+      vendidos: n(r.vendidos),
+      utilidad: n(r.utilidad),
+    })),
+    mas_lentos: masLentos.map((r) => ({
+      ...r,
+      dias: r.dias != null ? Math.round(n(r.dias)) : null,
+      vendidos: n(r.vendidos),
+      utilidad: n(r.utilidad),
+    })),
+    por_canal: porCanal,
+    por_pago: porPago,
+    ticket_promedio: n(ticket?.ticket_promedio),
+    utilidad_promedio: n(ticket?.utilidad_promedio),
+    num_ventas: n(ticket?.num_ventas),
+  };
+}
+
+export function productosRentables() {
+  const mejores = db.prepare(`
+    SELECT
+      producto_nombre,
+      SUM(cantidad) AS vendidos,
+      SUM(precio_venta * cantidad) AS ingresos,
+      SUM(costo_unitario * cantidad) AS costo,
+      SUM(utilidad) AS utilidad,
+      CASE WHEN SUM(precio_venta * cantidad) > 0
+        THEN (SUM(utilidad) / SUM(precio_venta * cantidad)) * 100 ELSE 0 END AS margen
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id AND v.estado != 'cancelado'
+    GROUP BY producto_nombre
+    ORDER BY utilidad DESC
+    LIMIT 10
+  `).all();
+
+  const peores = db.prepare(`
+    SELECT
+      producto_nombre,
+      SUM(cantidad) AS vendidos,
+      SUM(precio_venta * cantidad) AS ingresos,
+      SUM(costo_unitario * cantidad) AS costo,
+      SUM(utilidad) AS utilidad,
+      CASE WHEN SUM(precio_venta * cantidad) > 0
+        THEN (SUM(utilidad) / SUM(precio_venta * cantidad)) * 100 ELSE 0 END AS margen
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id AND v.estado != 'cancelado'
+    GROUP BY producto_nombre
+    ORDER BY utilidad ASC
+    LIMIT 10
+  `).all();
+
+  return { mejores, peores };
+}
+
+export function stockCritico() {
+  return db.prepare(`
+    SELECT
+      i.id,
+      i.nombre,
+      i.cantidad,
+      i.costo_unitario,
+      i.precio_sugerido,
+      i.fecha_ingreso,
+      i.proveedor_nombre,
+      CAST(julianday('now') - julianday(i.fecha_ingreso) AS INTEGER) AS dias_en_stock,
+      COALESCE(SUM(vi.cantidad), 0) AS veces_vendido
+    FROM inventario i
+    LEFT JOIN venta_items vi ON vi.inventario_id = i.id
+    WHERE i.estado IN ('disponible', 'reservado') AND i.cantidad > 0
+    GROUP BY i.id
+    ORDER BY dias_en_stock DESC, veces_vendido ASC
+    LIMIT 15
+  `).all();
+}
+
+export function obtenerDashboardDecisiones() {
+  const fechaHoy = hoy();
+  const desdeMes = inicioMes();
+  const hastaMes = finMes();
+
+  const ventasHoy = ventasService.ventasDelPeriodo(fechaHoy, fechaHoy);
+  const ventasMes = ventasService.ventasDelPeriodo(desdeMes, hastaMes);
+  const gastosMes = gastosService.gastosDelPeriodo(desdeMes, hastaMes);
+  const dineroCaja = cajaService.saldoActual();
+  const valorInventario = inventarioService.valorTotalInventario();
+  const autosVendidos = ventasService.autosVendidos(desdeMes, hastaMes);
+  const topProductos = ventasService.topProductos(8, desdeMes, hastaMes);
+  const bajaRotacion = inventarioService.productosBajaRotacion(8);
+  const cajas = rentabilidadPorCaja();
+  const proveedores = rentabilidadPorProveedor();
+  const velocidad = velocidadVentas();
+  const rentables = productosRentables();
+  const stockCriticoRows = stockCritico();
+  const desde30 = haceDias(29);
+  const ventasPorDia = ventasService.ventasPorDia(desde30, fechaHoy);
+  const gastosPorCat = gastosService.gastosPorCategoria(desdeMes, hastaMes);
+
+  const utilidadNetaMes = n(ventasMes?.utilidad_bruta) - n(gastosMes?.total);
+  const margenMes = calcularMargen(n(ventasMes?.utilidad_bruta), n(ventasMes?.total));
+
+  const mejoresCajas = [...cajas].sort((a, b) => b.utilidad - a.utilidad).slice(0, 8);
+  const peoresCajas = [...cajas].filter((c) => c.autos_totales > 0).sort((a, b) => a.utilidad - b.utilidad).slice(0, 5);
+
+  const utilidadTotalHist = db.prepare(`
+    SELECT COALESCE(SUM(utilidad_bruta),0) AS u FROM ventas WHERE estado != 'cancelado'
+  `).get();
+
+  return {
+    ventas_hoy: n(ventasHoy?.total),
+    ventas_mes: n(ventasMes?.total),
+    utilidad_bruta_mes: n(ventasMes?.utilidad_bruta),
+    utilidad_neta_mes: utilidadNetaMes,
+    dinero_caja: dineroCaja,
+    valor_inventario: valorInventario,
+    autos_vendidos_mes: autosVendidos,
+    margen_promedio: margenMes,
+    gastos_mes: n(gastosMes?.total),
+    ticket_promedio: velocidad.ticket_promedio,
+    utilidad_promedio_venta: velocidad.utilidad_promedio,
+    dias_promedio_venta: velocidad.dias_promedio,
+    utilidad_historica: n(utilidadTotalHist?.u),
+
+    top_productos: topProductos,
+    baja_rotacion: bajaRotacion,
+    cajas: mejoresCajas,
+    cajas_todas: cajas,
+    peores_cajas: peoresCajas,
+    proveedores,
+    velocidad,
+    productos_mejores: rentables.mejores,
+    productos_peores: rentables.peores,
+    stock_critico: stockCriticoRows,
+    lives_rentables: [],
+    graficos: {
+      ventas_por_dia: ventasPorDia.map((r) => ({
+        fecha: r.fecha,
+        ventas: n(r.ventas),
+        utilidad: n(r.utilidad),
+        cantidad: n(r.cantidad),
+      })),
+      gastos_por_categoria: gastosPorCat.map((r) => ({
+        categoria: r.categoria,
+        total: n(r.total),
+      })),
+      top_productos: topProductos.map((r) => ({
+        nombre: r.producto_nombre,
+        vendidos: n(r.total_vendido),
+        ingresos: n(r.ingresos),
+        utilidad: n(r.utilidad),
+      })),
+      por_canal: (velocidad.por_canal || []).map((r) => ({
+        canal: r.canal || 'Sin canal',
+        total: n(r.total),
+        utilidad: n(r.utilidad),
+        ventas: n(r.ventas),
+      })),
+      por_pago: (velocidad.por_pago || []).map((r) => ({
+        metodo: r.metodo_pago || 'Sin método',
+        total: n(r.total),
+        utilidad: n(r.utilidad),
+        ventas: n(r.ventas),
+      })),
+      proveedores: proveedores.slice(0, 8).map((p) => ({
+        proveedor: p.proveedor,
+        utilidad: n(p.utilidad),
+        ingresos: n(p.ingresos),
+        comprado: n(p.total_comprado),
+      })),
+    },
+
+    resumen_decisiones: {
+      proveedores_seguir: proveedores.filter((p) => p.recomendacion?.nivel === 'excelente' || p.recomendacion?.nivel === 'bueno').length,
+      proveedores_revisar: proveedores.filter((p) => p.recomendacion?.nivel === 'malo' || p.recomendacion?.nivel === 'regular').length,
+      cajas_recuperadas: cajas.filter((c) => c.recuperado).length,
+      cajas_en_proceso: cajas.filter((c) => !c.recuperado && n(c.autos_totales) > 0).length,
+    },
+  };
+}
+
+export function obtenerDashboard() {
+  return obtenerDashboardDecisiones();
+}
+
+export function obtenerReporte(desde, hasta) {
+  const ventas = ventasService.ventasDelPeriodo(desde, hasta);
+  const gastos = gastosService.gastosDelPeriodo(desde, hasta);
+  const gastosCat = gastosService.gastosPorCategoria(desde, hasta);
+
+  return {
+    periodo: { desde, hasta },
+    ventas: ventas.total,
+    utilidad_bruta: ventas.utilidad_bruta,
+    utilidad_neta: ventas.utilidad_bruta - gastos.total,
+    gastos: gastos.total,
+    gastos_por_categoria: gastosCat,
+    valor_inventario: inventarioService.valorTotalInventario(),
+    top_productos: ventasService.topProductos(10, desde, hasta),
+    proveedores: rentabilidadPorProveedor(),
+    productos_menos_rentables: productosRentables().peores,
+    clientes_principales: [],
+  };
+}

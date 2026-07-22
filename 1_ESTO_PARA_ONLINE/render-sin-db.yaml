@@ -1,0 +1,25 @@
+# Versión SIN base de datos — usa si ya tienes 1 Postgres gratis en Render
+# o si usarás Neon/Supabase como base externa.
+#
+# En Render Dashboard → bombastic-api → Environment:
+#   DATABASE_URL = (URL de tu Postgres existente o de Neon)
+#   CORS_ORIGIN  = https://tu-sitio.netlify.app
+#   NODE_ENV     = production
+
+services:
+  - type: web
+    name: bombastic-api
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
