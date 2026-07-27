@@ -79,7 +79,9 @@ export const api = {
 
   ventas: {
     list: (params = {}) => request(`/ventas?${new URLSearchParams(params)}`),
+    get: (id) => request(`/ventas/${id}`),
     create: (data) => request('/ventas', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/ventas/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     cancelar: (id) => request(`/ventas/${id}/cancelar`, { method: 'POST' }),
     recalcularUtilidades: () => request('/ventas/recalcular-utilidades', { method: 'POST' }),
     updateItem: (itemId, data) => request(`/ventas/items/${itemId}`, { method: 'PUT', body: JSON.stringify(data) }),

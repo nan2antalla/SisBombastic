@@ -24,10 +24,36 @@ export async function saldoActual() {
 
 export async function registrarEntradaVenta(ventaId, monto, fecha, client = null) {
   const run = client ? (t, p) => client.query(t, p) : query;
+  const get = client
+    ? async (t, p) => (await client.query(t, p)).rows[0]
+    : getOne;
+
+  const existente = await get(
+    `SELECT id FROM caja_movimientos WHERE referencia_tipo = 'venta' AND referencia_id = $1 AND tipo = 'entrada_venta'`,
+    [ventaId]
+  );
+
+  if (existente) {
+    await run(`
+      UPDATE caja_movimientos
+      SET fecha = $1, monto = $2, descripcion = $3
+      WHERE id = $4
+    `, [fecha, monto, `Venta #${ventaId}`, existente.id]);
+    return;
+  }
+
   await run(`
     INSERT INTO caja_movimientos (fecha, tipo, monto, descripcion, referencia_tipo, referencia_id)
     VALUES ($1,'entrada_venta',$2,$3,'venta',$4)
   `, [fecha, monto, `Venta #${ventaId}`, ventaId]);
+}
+
+export async function eliminarEntradaVenta(ventaId, client = null) {
+  const run = client ? (t, p) => client.query(t, p) : query;
+  await run(
+    `DELETE FROM caja_movimientos WHERE referencia_tipo = 'venta' AND referencia_id = $1 AND tipo = 'entrada_venta'`,
+    [ventaId]
+  );
 }
 
 export async function registrarSalidaGasto(gastoId, monto, fecha, descripcion, client = null) {

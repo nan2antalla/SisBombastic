@@ -183,6 +183,23 @@ export async function descontarStock(inventarioId, cantidad, client = null) {
   return updated.rows[0];
 }
 
+export async function devolverStock(inventarioId, cantidad, client = null) {
+  const run = client ? (t, p) => client.query(t, p) : query;
+  const res = await run('SELECT * FROM inventario WHERE id = $1', [inventarioId]);
+  const row = res.rows[0];
+  if (!row) return null;
+
+  const nuevaCantidad = Number(row.cantidad || 0) + Number(cantidad);
+  const nuevoEstado = nuevaCantidad > 0 && row.estado === 'vendido' ? 'disponible' : row.estado;
+
+  await run(
+    'UPDATE inventario SET cantidad=$1, estado=$2, updated_at=NOW() WHERE id=$3',
+    [nuevaCantidad, nuevoEstado, inventarioId]
+  );
+  const updated = await run('SELECT * FROM inventario WHERE id = $1', [inventarioId]);
+  return updated.rows[0];
+}
+
 export async function valorTotalInventario() {
   const row = await getOne(`
     SELECT COALESCE(SUM(cantidad * costo_unitario), 0) as valor

@@ -16,6 +16,9 @@ export default function Ventas() {
   const [clientes, setClientes] = useState([]);
   const [modal, setModal] = useState(false);
   const [detalle, setDetalle] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
   const [nuevoClienteModal, setNuevoClienteModal] = useState(false);
   const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', whatsapp: '', ciudad: '' });
   const [recalcLoading, setRecalcLoading] = useState(false);
@@ -167,6 +170,27 @@ export default function Ventas() {
     }
   };
 
+  const toDateInput = (f) => {
+    if (!f) return '';
+    const s = String(f);
+    return s.length >= 10 ? s.slice(0, 10) : s;
+  };
+
+  const openDetalle = (v) => {
+    setDetalle(v);
+    setEditError('');
+    setEditForm({
+      fecha: toDateInput(v.fecha),
+      cliente_id: v.cliente_id ? String(v.cliente_id) : '',
+      cliente_nombre: v.cliente_nombre || '',
+      metodo_pago: v.metodo_pago || '',
+      canal: v.canal || '',
+      delivery: v.delivery ?? '',
+      estado: v.estado || 'pagado',
+      notas: v.notas || '',
+    });
+  };
+
   const handleUpdateItem = async (itemId, field, value) => {
     try {
       const updated = await api.ventas.updateItem(itemId, { [field]: Number(value) });
@@ -177,7 +201,63 @@ export default function Ventas() {
     }
   };
 
+  const handleGuardarVenta = async (e) => {
+    e.preventDefault();
+    if (!detalle || !editForm) return;
+    setEditError('');
+    setEditSaving(true);
+    try {
+      const cliente = clientes.find((c) => String(c.id) === String(editForm.cliente_id));
+      const updated = await api.ventas.update(detalle.id, {
+        fecha: editForm.fecha,
+        cliente_id: editForm.cliente_id ? Number(editForm.cliente_id) : null,
+        cliente_nombre: cliente?.nombre || editForm.cliente_nombre,
+        metodo_pago: editForm.metodo_pago,
+        canal: editForm.canal,
+        delivery: Number(editForm.delivery || 0),
+        estado: editForm.estado,
+        notas: editForm.notas,
+      });
+      setDetalle(updated);
+      setEditForm({
+        fecha: toDateInput(updated.fecha),
+        cliente_id: updated.cliente_id ? String(updated.cliente_id) : '',
+        cliente_nombre: updated.cliente_nombre || '',
+        metodo_pago: updated.metodo_pago || '',
+        canal: updated.canal || '',
+        delivery: updated.delivery ?? '',
+        estado: updated.estado || 'pagado',
+        notas: updated.notas || '',
+      });
+      load();
+      api.inventario.list({ estado: 'disponible' }).then(setInventario);
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleCancelarVenta = async () => {
+    if (!detalle) return;
+    if (!confirm('¿Cancelar esta venta? Se devolverá el stock al inventario y se quitará el ingreso de caja.')) return;
+    setEditSaving(true);
+    setEditError('');
+    try {
+      const updated = await api.ventas.cancelar(detalle.id);
+      setDetalle(updated);
+      setEditForm((prev) => (prev ? { ...prev, estado: 'cancelado' } : prev));
+      load();
+      api.inventario.list({ estado: 'disponible' }).then(setInventario);
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const pager = usePagination(ventas, 10);
+  const ventaCancelada = detalle?.estado === 'cancelado';
 
   return (
     <div>
@@ -224,7 +304,7 @@ export default function Ventas() {
                 <td>{labelOf(CANALES, v.canal)}</td>
                 <td><Badge label={labelOf(ESTADOS_VENTA, v.estado)} colorClass={badgeClass(ESTADOS_VENTA, v.estado)} /></td>
                 <td>
-                  <button className="btn-secondary text-xs py-1" onClick={() => setDetalle(v)}>Ver / Editar</button>
+                  <button className="btn-secondary text-xs py-1" onClick={() => openDetalle(v)}>Ver / Editar</button>
                 </td>
               </tr>
             ))}
@@ -408,12 +488,106 @@ export default function Ventas() {
         </form>
       </Modal>
 
-      <Modal open={!!detalle} onClose={() => setDetalle(null)} title={`Venta #${detalle?.id || ''}`} wide>
-        {detalle && (
-          <div className="space-y-4">
+      <Modal
+        open={!!detalle}
+        onClose={() => { setDetalle(null); setEditForm(null); setEditError(''); }}
+        title={`Venta #${detalle?.id || ''}`}
+        wide
+      >
+        {detalle && editForm && (
+          <form className="space-y-4" onSubmit={handleGuardarVenta}>
+            {editError && <p className="text-red-600 text-sm">{editError}</p>}
+            {ventaCancelada && (
+              <p className="text-sm money-neg">Esta venta está cancelada. No se puede editar.</p>
+            )}
+
+            <div className="form-grid">
+              <div>
+                <label>Fecha</label>
+                <input
+                  type="date"
+                  required
+                  disabled={ventaCancelada}
+                  value={editForm.fecha}
+                  onChange={(e) => setEditForm({ ...editForm, fecha: e.target.value })}
+                />
+              </div>
+              <div>
+                <label>Cliente</label>
+                <select
+                  required
+                  disabled={ventaCancelada}
+                  value={editForm.cliente_id}
+                  onChange={(e) => setEditForm({ ...editForm, cliente_id: e.target.value })}
+                >
+                  <option value="">Seleccionar...</option>
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Método de pago</label>
+                <select
+                  required
+                  disabled={ventaCancelada}
+                  value={editForm.metodo_pago}
+                  onChange={(e) => setEditForm({ ...editForm, metodo_pago: e.target.value })}
+                >
+                  <option value="">Seleccionar...</option>
+                  {METODOS_PAGO.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Canal</label>
+                <select
+                  required
+                  disabled={ventaCancelada}
+                  value={editForm.canal}
+                  onChange={(e) => setEditForm({ ...editForm, canal: e.target.value })}
+                >
+                  <option value="">Seleccionar...</option>
+                  {CANALES.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Estado</label>
+                <select
+                  disabled={ventaCancelada}
+                  value={editForm.estado}
+                  onChange={(e) => setEditForm({ ...editForm, estado: e.target.value })}
+                >
+                  {ESTADOS_VENTA.map((s) => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Delivery (Bs)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  disabled={ventaCancelada}
+                  value={editForm.delivery}
+                  onChange={(e) => setEditForm({ ...editForm, delivery: e.target.value })}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label>Notas</label>
+                <input
+                  disabled={ventaCancelada}
+                  value={editForm.notas}
+                  onChange={(e) => setEditForm({ ...editForm, notas: e.target.value })}
+                />
+              </div>
+            </div>
+
             <div className="form-grid text-sm">
-              <p><strong>Fecha:</strong> {formatDate(detalle.fecha)}</p>
-              <p><strong>Cliente:</strong> {detalle.cliente_nombre || '-'}</p>
               <p><strong>Total:</strong> {formatMoney(detalle.total_venta)}</p>
               <p>
                 <strong>Utilidad:</strong>{' '}
@@ -423,58 +597,87 @@ export default function Ventas() {
                 )}
               </p>
             </div>
+
             <div className="table-wrap">
               <table>
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Cant.</th>
-                  <th>Precio</th>
-                  <th>Costo</th>
-                  <th>Utilidad</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detalle.items?.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.producto_nombre}</td>
-                    <td>{item.cantidad}</td>
-                    <td>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="w-full max-w-24"
-                        defaultValue={item.precio_venta}
-                        onBlur={(e) => {
-                          if (Number(e.target.value) !== Number(item.precio_venta)) {
-                            handleUpdateItem(item.id, 'precio_venta', e.target.value);
-                          }
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="w-full max-w-24"
-                        defaultValue={item.costo_unitario}
-                        onBlur={(e) => {
-                          if (Number(e.target.value) !== Number(item.costo_unitario)) {
-                            handleUpdateItem(item.id, 'costo_unitario', e.target.value);
-                          }
-                        }}
-                      />
-                    </td>
-                    <td><Money value={item.utilidad} signed /></td>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Cant.</th>
+                    <th>Precio</th>
+                    <th>Costo</th>
+                    <th>Utilidad</th>
                   </tr>
-                ))}
-              </tbody>
+                </thead>
+                <tbody>
+                  {detalle.items?.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.producto_nombre}</td>
+                      <td>{item.cantidad}</td>
+                      <td>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full max-w-24"
+                          disabled={ventaCancelada}
+                          defaultValue={item.precio_venta}
+                          key={`p-${item.id}-${item.precio_venta}`}
+                          onBlur={(e) => {
+                            if (ventaCancelada) return;
+                            if (Number(e.target.value) !== Number(item.precio_venta)) {
+                              handleUpdateItem(item.id, 'precio_venta', e.target.value);
+                            }
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full max-w-24"
+                          disabled={ventaCancelada}
+                          defaultValue={item.costo_unitario}
+                          key={`c-${item.id}-${item.costo_unitario}`}
+                          onBlur={(e) => {
+                            if (ventaCancelada) return;
+                            if (Number(e.target.value) !== Number(item.costo_unitario)) {
+                              handleUpdateItem(item.id, 'costo_unitario', e.target.value);
+                            }
+                          }}
+                        />
+                      </td>
+                      <td><Money value={item.utilidad} signed /></td>
+                    </tr>
+                  ))}
+                </tbody>
               </table>
             </div>
+
             <div className="form-actions">
-              <button className="btn-secondary" onClick={() => setDetalle(null)}>Cerrar</button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => { setDetalle(null); setEditForm(null); }}
+              >
+                Cerrar
+              </button>
+              {!ventaCancelada && (
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary text-red-400"
+                    disabled={editSaving}
+                    onClick={handleCancelarVenta}
+                  >
+                    Cancelar venta
+                  </button>
+                  <button type="submit" className="btn-primary" disabled={editSaving}>
+                    {editSaving ? 'Guardando...' : 'Guardar cambios'}
+                  </button>
+                </>
+              )}
             </div>
-          </div>
+          </form>
         )}
       </Modal>
     </div>

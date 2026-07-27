@@ -144,11 +144,118 @@ async function actualizarClienteStats(clienteId, clienteNombre, monto, fecha, cl
 }
 
 export async function cancelarVenta(id) {
+  return withTransaction(async (client) => {
+    const ventaRes = await client.query('SELECT * FROM ventas WHERE id = $1 FOR UPDATE', [id]);
+    const venta = ventaRes.rows[0];
+    if (!venta) return null;
+    if (venta.estado === 'cancelado') {
+      return obtenerVenta(id);
+    }
+
+    const itemsRes = await client.query('SELECT * FROM venta_items WHERE venta_id = $1', [id]);
+    for (const item of itemsRes.rows) {
+      if (item.inventario_id) {
+        await inventarioService.devolverStock(item.inventario_id, Number(item.cantidad), client);
+      }
+    }
+
+    await cajaService.eliminarEntradaVenta(id, client);
+    await client.query(`UPDATE ventas SET estado = 'cancelado' WHERE id = $1`, [id]);
+
+    if (venta.cliente_id) {
+      await client.query(`
+        UPDATE clientes SET
+          total_comprado = GREATEST(COALESCE(total_comprado,0) - $1, 0),
+          cantidad_compras = GREATEST(COALESCE(cantidad_compras,0) - 1, 0)
+        WHERE id = $2
+      `, [Number(venta.total_venta || 0), venta.cliente_id]);
+    }
+
+    return obtenerVenta(id);
+  });
+}
+
+function ventaAfectaCaja(estado) {
+  return estado !== 'cancelado' && estado !== 'pendiente';
+}
+
+async function sincronizarCajaDeVenta(venta, client = null) {
+  if (!venta) return;
+  if (ventaAfectaCaja(venta.estado)) {
+    await cajaService.registrarEntradaVenta(
+      venta.id,
+      Number(venta.total_venta || 0),
+      venta.fecha,
+      client
+    );
+  } else {
+    await cajaService.eliminarEntradaVenta(venta.id, client);
+  }
+}
+
+/**
+ * Edita datos de la venta (estado, cliente, pago, canal, etc.)
+ * y mantiene caja sincronizada.
+ */
+export async function actualizarVenta(id, data) {
+  const actual = await obtenerVenta(id);
+  if (!actual) return null;
+  if (actual.estado === 'cancelado') {
+    throw Object.assign(new Error('No se puede editar una venta cancelada'), { status: 400 });
+  }
+  if (data.estado === 'cancelado') {
+    return cancelarVenta(id);
+  }
+
+  const { obtenerOCrearPorNombre } = await import('./clientes.service.js');
+  let clienteId = data.cliente_id !== undefined ? (data.cliente_id || null) : actual.cliente_id;
+  let clienteNombre = data.cliente_nombre !== undefined ? data.cliente_nombre : actual.cliente_nombre;
+
+  if (clienteId) {
+    const c = await getOne('SELECT * FROM clientes WHERE id = $1', [clienteId]);
+    if (c) clienteNombre = c.nombre;
+  } else if (data.cliente_nombre) {
+    const c = await obtenerOCrearPorNombre(data.cliente_nombre);
+    if (c) {
+      clienteId = c.id;
+      clienteNombre = c.nombre;
+    }
+  }
+
+  const fecha = data.fecha ?? actual.fecha;
+  const metodoPago = data.metodo_pago ?? actual.metodo_pago;
+  const canal = data.canal ?? actual.canal;
+  const delivery = data.delivery != null ? Number(data.delivery) : Number(actual.delivery || 0);
+  const estado = data.estado ?? actual.estado;
+  const notas = data.notas !== undefined ? data.notas : actual.notas;
+
+  if (!metodoPago) throw Object.assign(new Error('El método de pago es obligatorio'), { status: 400 });
+  if (!canal) throw Object.assign(new Error('El canal es obligatorio'), { status: 400 });
+
+  // Recalcular totales con delivery nuevo
+  let totalProductos = 0;
+  let totalCosto = 0;
+  let utilidadBruta = 0;
+  for (const it of actual.items || []) {
+    totalProductos += Number(it.precio_venta) * Number(it.cantidad);
+    totalCosto += Number(it.costo_unitario) * Number(it.cantidad);
+    utilidadBruta += Number(it.utilidad);
+  }
+  const totalVenta = totalProductos + delivery;
+
+  await query(`
+    UPDATE ventas SET
+      fecha=$1, cliente_id=$2, cliente_nombre=$3, metodo_pago=$4, canal=$5,
+      delivery=$6, estado=$7, notas=$8, total_venta=$9, total_costo=$10, utilidad_bruta=$11
+    WHERE id=$12
+  `, [
+    fecha, clienteId, clienteNombre, metodoPago, canal,
+    delivery, estado, notas || null, totalVenta, totalCosto, utilidadBruta, id,
+  ]);
+
   const venta = await obtenerVenta(id);
-  if (!venta) return null;
-  if (venta.estado === 'cancelado') return venta;
-  await query(`UPDATE ventas SET estado = 'cancelado' WHERE id = $1`, [id]);
-  return obtenerVenta(id);
+  await sincronizarCajaDeVenta(venta);
+  return venta;
 }
 
 /**
@@ -187,7 +294,6 @@ export async function recalcularUtilidades() {
         }
 
         const utilidad = (Number(item.precio_venta) - nuevoCosto) * Number(item.cantidad);
-        totalCosto += nuevoCosto * Number(item.cantidad);
 
         if (nuevoCosto !== Number(item.costo_unitario) || utilidad !== Number(item.utilidad)) {
           await client.query(
@@ -231,6 +337,11 @@ export async function actualizarItemVenta(itemId, data) {
   const item = await getOne('SELECT * FROM venta_items WHERE id = $1', [itemId]);
   if (!item) return null;
 
+  const ventaCheck = await getOne('SELECT estado FROM ventas WHERE id = $1', [item.venta_id]);
+  if (ventaCheck?.estado === 'cancelado') {
+    throw Object.assign(new Error('No se puede editar una venta cancelada'), { status: 400 });
+  }
+
   const precio = data.precio_venta != null ? Number(data.precio_venta) : Number(item.precio_venta);
   const costo = data.costo_unitario != null ? Number(data.costo_unitario) : Number(item.costo_unitario);
   const cantidad = data.cantidad != null ? Number(data.cantidad) : Number(item.cantidad);
@@ -260,7 +371,9 @@ export async function actualizarItemVenta(itemId, data) {
     [totalProductos + delivery, totalCosto, utilidadBruta, ventaId]
   );
 
-  return obtenerVenta(ventaId);
+  const ventaFresh = await obtenerVenta(ventaId);
+  await sincronizarCajaDeVenta(ventaFresh);
+  return ventaFresh;
 }
 
 export async function topProductos(limite = 10, desde, hasta) {
