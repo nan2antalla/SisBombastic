@@ -33,7 +33,12 @@ app.use(cors({
 app.use(express.json());
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', nombre: 'Bombastic Dreamers Online' });
+  res.json({
+    status: 'ok',
+    nombre: 'Bombastic Dreamers Online',
+    version: '2026-07-27-editar-ventas',
+    features: { editar_ventas: true },
+  });
 });
 
 app.use('/api/auth', authRoutes);
@@ -49,6 +54,10 @@ app.use('/api/backup', backupRoutes);
 app.use('/api/admin', resetRoutes);
 app.use('/api/proveedores', proveedoresRoutes);
 app.use('/api/clientes', clientesRoutes);
+
+app.use((req, res) => {
+  res.status(404).json({ error: `Ruta no encontrada: ${req.method} ${req.originalUrl}` });
+});
 
 async function start() {
   if (!process.env.DATABASE_URL) {

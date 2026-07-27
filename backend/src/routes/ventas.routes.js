@@ -36,11 +36,14 @@ router.put('/items/:itemId', asyncHandler(async (req, res) => {
   res.json(venta);
 }));
 
-router.put('/:id', asyncHandler(async (req, res) => {
+async function handleActualizarVenta(req, res) {
   const venta = await ventasService.actualizarVenta(Number(req.params.id), req.body);
   if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
   res.json(venta);
-}));
+}
+
+router.post('/:id/actualizar', asyncHandler(handleActualizarVenta));
+router.put('/:id', asyncHandler(handleActualizarVenta));
 
 router.post('/:id/cancelar', asyncHandler(async (req, res) => {
   const venta = await ventasService.cancelarVenta(Number(req.params.id));

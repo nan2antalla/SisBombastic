@@ -179,13 +179,22 @@ function ventaAfectaCaja(estado) {
   return estado !== 'cancelado' && estado !== 'pendiente';
 }
 
+function toDateOnly(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 async function sincronizarCajaDeVenta(venta, client = null) {
   if (!venta) return;
   if (ventaAfectaCaja(venta.estado)) {
     await cajaService.registrarEntradaVenta(
       venta.id,
       Number(venta.total_venta || 0),
-      venta.fecha,
+      toDateOnly(venta.fecha) || venta.fecha,
       client
     );
   } else {
@@ -222,10 +231,15 @@ export async function actualizarVenta(id, data) {
     }
   }
 
-  const fecha = data.fecha ?? actual.fecha;
+  const fecha = toDateOnly(data.fecha ?? actual.fecha);
+  if (!fecha) {
+    throw Object.assign(new Error('La fecha es inválida'), { status: 400 });
+  }
+
   const metodoPago = data.metodo_pago ?? actual.metodo_pago;
   const canal = data.canal ?? actual.canal;
-  const delivery = data.delivery != null ? Number(data.delivery) : Number(actual.delivery || 0);
+  const deliveryRaw = data.delivery != null ? Number(data.delivery) : Number(actual.delivery || 0);
+  const delivery = Number.isFinite(deliveryRaw) ? deliveryRaw : 0;
   const estado = data.estado ?? actual.estado;
   const notas = data.notas !== undefined ? data.notas : actual.notas;
 
@@ -249,8 +263,18 @@ export async function actualizarVenta(id, data) {
       delivery=$6, estado=$7, notas=$8, total_venta=$9, total_costo=$10, utilidad_bruta=$11
     WHERE id=$12
   `, [
-    fecha, clienteId, clienteNombre, metodoPago, canal,
-    delivery, estado, notas || null, totalVenta, totalCosto, utilidadBruta, id,
+    fecha,
+    clienteId || null,
+    clienteNombre || null,
+    metodoPago,
+    canal,
+    delivery,
+    estado,
+    notas || null,
+    totalVenta,
+    totalCosto,
+    utilidadBruta,
+    id,
   ]);
 
   const venta = await obtenerVenta(id);

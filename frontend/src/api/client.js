@@ -22,7 +22,15 @@ async function request(path, options = {}) {
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(`${API}${path}`, { ...options, headers });
-  const data = await res.json().catch(() => null);
+  const raw = await res.text();
+  let data = null;
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = null;
+    }
+  }
 
   if (res.status === 401 && !path.startsWith('/auth/login')) {
     clearToken();
@@ -31,7 +39,16 @@ async function request(path, options = {}) {
     }
   }
 
-  if (!res.ok) throw new Error(data?.error || 'Error en la solicitud');
+  if (!res.ok) {
+    const msg =
+      data?.error ||
+      (res.status === 404
+        ? 'La API no reconoce esta acción. Espera a que Render termine de desplegar o haz Manual Deploy del backend.'
+        : res.status >= 500
+          ? `Error del servidor (${res.status}). Reintenta en unos segundos.`
+          : `Error en la solicitud (${res.status})`);
+    throw new Error(msg);
+  }
   return data;
 }
 
@@ -81,7 +98,7 @@ export const api = {
     list: (params = {}) => request(`/ventas?${new URLSearchParams(params)}`),
     get: (id) => request(`/ventas/${id}`),
     create: (data) => request('/ventas', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id, data) => request(`/ventas/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/ventas/${id}/actualizar`, { method: 'POST', body: JSON.stringify(data) }),
     cancelar: (id) => request(`/ventas/${id}/cancelar`, { method: 'POST' }),
     recalcularUtilidades: () => request('/ventas/recalcular-utilidades', { method: 'POST' }),
     updateItem: (itemId, data) => request(`/ventas/items/${itemId}`, { method: 'PUT', body: JSON.stringify(data) }),
