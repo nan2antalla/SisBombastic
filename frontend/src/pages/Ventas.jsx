@@ -5,6 +5,7 @@ import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 import Badge from '../components/Badge';
 import Pagination from '../components/Pagination';
+import Money from '../components/Money';
 import { usePagination } from '../hooks/usePagination';
 
 const emptyItem = { inventario_id: '', producto_nombre: '', cantidad: 1, precio_venta: '', costo_unitario: '' };
@@ -218,7 +219,7 @@ export default function Ventas() {
                 <td>{v.items?.map((i) => i.producto_nombre).join(', ')}</td>
                 <td>{formatMoney(v.total_venta)}</td>
                 <td>{formatMoney(v.total_costo)}</td>
-                <td className="text-green-600">{formatMoney(v.utilidad_bruta)}</td>
+                <td><Money value={v.utilidad_bruta} signed /></td>
                 <td>{labelOf(METODOS_PAGO, v.metodo_pago)}</td>
                 <td>{labelOf(CANALES, v.canal)}</td>
                 <td><Badge label={labelOf(ESTADOS_VENTA, v.estado)} colorClass={badgeClass(ESTADOS_VENTA, v.estado)} /></td>
@@ -359,7 +360,13 @@ export default function Ventas() {
 
           <div className="panel-muted">
             <p><strong>Total venta:</strong> {formatMoney(totalVenta)}</p>
-            <p><strong>Utilidad bruta:</strong> {formatMoney(totalUtilidad)}</p>
+            <p>
+              <strong>Utilidad bruta:</strong>{' '}
+              <Money value={totalUtilidad} signed className="text-base" />
+              {totalUtilidad < 0 && (
+                <span className="ml-2 text-xs money-neg-bg money-neg">Pérdida</span>
+              )}
+            </p>
           </div>
 
           <div className="form-actions">
@@ -408,7 +415,13 @@ export default function Ventas() {
               <p><strong>Fecha:</strong> {formatDate(detalle.fecha)}</p>
               <p><strong>Cliente:</strong> {detalle.cliente_nombre || '-'}</p>
               <p><strong>Total:</strong> {formatMoney(detalle.total_venta)}</p>
-              <p><strong>Utilidad:</strong> <span className="text-green-600">{formatMoney(detalle.utilidad_bruta)}</span></p>
+              <p>
+                <strong>Utilidad:</strong>{' '}
+                <Money value={detalle.utilidad_bruta} signed />
+                {Number(detalle.utilidad_bruta) < 0 && (
+                  <span className="ml-2 text-xs money-neg-bg money-neg">Pérdida</span>
+                )}
+              </p>
             </div>
             <div className="table-wrap">
               <table>
@@ -452,7 +465,7 @@ export default function Ventas() {
                         }}
                       />
                     </td>
-                    <td className="text-green-600">{formatMoney(item.utilidad)}</td>
+                    <td><Money value={item.utilidad} signed /></td>
                   </tr>
                 ))}
               </tbody>

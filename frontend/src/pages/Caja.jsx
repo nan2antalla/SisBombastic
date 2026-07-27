@@ -4,6 +4,7 @@ import { TIPOS_CAJA } from '../utils/constants';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 import Pagination from '../components/Pagination';
+import Money from '../components/Money';
 import { usePagination } from '../hooks/usePagination';
 
 export default function Caja() {
@@ -79,8 +80,8 @@ export default function Caja() {
 
       <div className="card border-[#ffcc00]/40 mb-6">
         <p className="stat-label">Dinero esperado en banco / caja</p>
-        <p className={`text-4xl font-bold mt-2 ${(efectivo?.dinero_esperado_banco ?? saldo) >= 0 ? 'text-[#ffcc00]' : 'text-red-400'}`}>
-          {formatMoney(efectivo?.dinero_esperado_banco ?? saldo)}
+        <p className="text-4xl font-bold mt-2">
+          <Money value={efectivo?.dinero_esperado_banco ?? saldo} signed />
         </p>
         <p className="text-xs text-gray-400 mt-2">
           {efectivo?.formula || 'Ventas + Inversión − Reinversiones − Gastos − Retiros'}
@@ -88,7 +89,7 @@ export default function Caja() {
         <p className="text-sm text-gray-300 mt-3">
           Inventario (no es efectivo): <strong>{formatMoney(efectivo?.valor_inventario)}</strong>
           {' · '}
-          Patrimonio aprox.: <strong>{formatMoney(efectivo?.patrimonio_aproximado)}</strong>
+          Patrimonio aprox.: <strong><Money value={efectivo?.patrimonio_aproximado} signed /></strong>
         </p>
       </div>
 
@@ -220,7 +221,7 @@ export default function Caja() {
                   <td>{formatMoney(c.saldo_inicial)}</td>
                   <td className="text-emerald-400">{formatMoney(c.entradas)}</td>
                   <td className="text-red-400">{formatMoney(c.salidas)}</td>
-                  <td className="font-medium">{formatMoney(c.saldo_final)}</td>
+                  <td className="font-medium"><Money value={c.saldo_final} signed /></td>
                 </tr>
               ))}
               {cierres.length === 0 && (

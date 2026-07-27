@@ -152,6 +152,34 @@ tr:hover td {
   color: #fca5a5;
 }
 
+.money-pos {
+  color: #86efac;
+}
+
+.money-neg {
+  color: #fca5a5;
+  font-weight: 600;
+}
+
+.money-zero {
+  color: inherit;
+}
+
+.money-neg-bg {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  border-radius: 0.5rem;
+  padding: 0.15rem 0.45rem;
+}
+
+.stat-card.is-negative::before {
+  background: linear-gradient(90deg, #f87171, transparent);
+}
+
+.stat-card.is-positive::before {
+  background: linear-gradient(90deg, #86efac, transparent);
+}
+
 .badge {
   @apply inline-block px-2 py-0.5 rounded-full text-xs font-medium;
 }

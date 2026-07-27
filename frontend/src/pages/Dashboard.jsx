@@ -1,17 +1,23 @@
 import { useEffect, useState } from 'react';
-import { api, formatMoney } from '../api/client';
+import { api, formatMoney, moneyTone } from '../api/client';
 import PageHeader from '../components/PageHeader';
 import Pagination from '../components/Pagination';
 import DashboardCharts from '../components/DashboardCharts';
+import Money from '../components/Money';
 import { usePagination } from '../hooks/usePagination';
 
-function StatCard({ label, value, positive, negative, hint }) {
-  const cls = positive ? 'positive' : negative ? 'negative' : '';
+function StatCard({ label, value, amount, positive, negative, hint }) {
+  const tone = amount != null ? moneyTone(amount) : null;
+  const cls = tone
+    ? (tone === 'pos' ? 'positive' : tone === 'neg' ? 'negative' : '')
+    : (positive ? 'positive' : negative ? 'negative' : '');
+  const cardTone = tone === 'neg' ? 'is-negative' : tone === 'pos' ? 'is-positive' : '';
   return (
-    <div className="stat-card">
+    <div className={`stat-card ${cardTone}`}>
       <span className="stat-label">{label}</span>
       <span className={`stat-value ${cls}`}>{value}</span>
       {hint && <span className="text-xs text-gray-400 mt-1">{hint}</span>}
+      {tone === 'neg' && <span className="text-[10px] uppercase tracking-wide text-red-400 mt-1">Pérdida / negativo</span>}
     </div>
   );
 }
@@ -92,19 +98,31 @@ export default function Dashboard() {
       {tab === 'resumen' && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-            <StatCard label="Ventas hoy" value={formatMoney(data.ventas_hoy)} />
-            <StatCard label="Ventas del mes" value={formatMoney(data.ventas_mes)} />
-            <StatCard label="Utilidad bruta mes" value={formatMoney(data.utilidad_bruta_mes)} positive />
+            <StatCard label="Ventas hoy" value={formatMoney(data.ventas_hoy)} amount={data.ventas_hoy} />
+            <StatCard label="Ventas del mes" value={formatMoney(data.ventas_mes)} amount={data.ventas_mes} />
+            <StatCard
+              label="Utilidad bruta mes"
+              value={<Money value={data.utilidad_bruta_mes} signed />}
+              amount={data.utilidad_bruta_mes}
+            />
             <StatCard
               label="Utilidad neta mes"
-              value={formatMoney(data.utilidad_neta_mes)}
-              positive={data.utilidad_neta_mes >= 0}
-              negative={data.utilidad_neta_mes < 0}
+              value={<Money value={data.utilidad_neta_mes} signed />}
+              amount={data.utilidad_neta_mes}
             />
-            <StatCard label="Dinero esperado (banco)" value={formatMoney(data.efectivo?.dinero_esperado_banco ?? data.dinero_caja)} hint="Lo que deberías tener en efectivo" />
+            <StatCard
+              label="Dinero esperado (banco)"
+              value={<Money value={data.efectivo?.dinero_esperado_banco ?? data.dinero_caja} signed />}
+              amount={data.efectivo?.dinero_esperado_banco ?? data.dinero_caja}
+              hint="Lo que deberías tener en efectivo"
+            />
             <StatCard label="Capital en inventario" value={formatMoney(data.valor_inventario)} hint="Dinero trabado en stock" />
             <StatCard label="Autos vendidos (mes)" value={data.autos_vendidos_mes} />
-            <StatCard label="Margen promedio" value={`${Number(data.margen_promedio || 0).toFixed(1)}%`} positive />
+            <StatCard
+              label="Margen promedio"
+              value={<Money value={data.margen_promedio} percent signed />}
+              amount={data.margen_promedio}
+            />
             <StatCard label="Ticket promedio" value={formatMoney(data.ticket_promedio)} />
             <StatCard
               label="Días promedio a vender"
@@ -112,7 +130,11 @@ export default function Dashboard() {
               hint="Desde ingreso a inventario hasta venta"
             />
             <StatCard label="Gastos del mes" value={formatMoney(data.gastos_mes)} negative />
-            <StatCard label="Utilidad histórica" value={formatMoney(data.utilidad_historica)} positive />
+            <StatCard
+              label="Utilidad histórica"
+              value={<Money value={data.utilidad_historica} signed />}
+              amount={data.utilidad_historica}
+            />
           </div>
 
           <div className="grid md:grid-cols-3 gap-4 mb-6">
@@ -148,7 +170,7 @@ export default function Dashboard() {
                         <td>{p.producto_nombre}</td>
                         <td>{p.total_vendido}</td>
                         <td>{formatMoney(p.ingresos)}</td>
-                        <td className="text-emerald-400">{formatMoney(p.utilidad)}</td>
+                        <td><Money value={p.utilidad} signed /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -188,26 +210,32 @@ export default function Dashboard() {
           <div className="space-y-4 sm:space-y-6">
             <div className="card border-[#ffcc00]/40">
               <p className="stat-label">Dinero que deberías tener en el banco / caja</p>
-              <p className={`text-4xl sm:text-5xl font-bold mt-2 ${Number(e.dinero_esperado_banco) >= 0 ? 'text-[#ffcc00]' : 'text-red-400'}`}>
-                {formatMoney(e.dinero_esperado_banco)}
+              <p className="text-4xl sm:text-5xl font-bold mt-2">
+                <Money value={e.dinero_esperado_banco} signed />
               </p>
               <p className="text-sm text-gray-400 mt-3">
                 Fórmula: <span className="text-gray-300">{e.formula}</span>
               </p>
               <p className="text-xs text-gray-500 mt-2">
-                Patrimonio aproximado (banco + inventario): <strong className="text-white">{formatMoney(e.patrimonio_aproximado)}</strong>
+                Patrimonio aproximado (banco + inventario):{' '}
+                <strong><Money value={e.patrimonio_aproximado} signed /></strong>
               </p>
             </div>
 
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              <StatCard label="(+) Ventas" value={formatMoney(d.ventas)} positive />
-              <StatCard label="(+) Inversión externa (caja)" value={formatMoney(d.inversiones_externas)} hint="Capital nuevo registrado en Caja" />
+              <StatCard label="(+) Ventas" value={formatMoney(d.ventas)} amount={d.ventas} />
+              <StatCard label="(+) Inversión externa (caja)" value={formatMoney(d.inversiones_externas)} amount={d.inversiones_externas} hint="Capital nuevo registrado en Caja" />
               <StatCard label="(−) Reinversiones" value={formatMoney(d.reinversiones_compras)} negative hint="Compras pagadas con plata de la caja" />
               <StatCard label="Compras externas" value={formatMoney(d.compras_externas)} hint="Pagadas afuera: no restan del banco" />
               <StatCard label="(−) Gastos" value={formatMoney(d.gastos)} negative />
               <StatCard label="(−) Retiros personales" value={formatMoney(d.retiros_personales)} negative />
               <StatCard label="Capital en inventario" value={formatMoney(e.valor_inventario)} hint="No es efectivo, es stock" />
-              <StatCard label="Patrimonio aprox." value={formatMoney(e.patrimonio_aproximado)} hint="Banco + inventario" />
+              <StatCard
+                label="Patrimonio aprox."
+                value={<Money value={e.patrimonio_aproximado} signed />}
+                amount={e.patrimonio_aproximado}
+                hint="Banco + inventario"
+              />
             </div>
 
             <Section title="Cómo leerlo" subtitle="Para no confundir utilidad con efectivo">
@@ -244,7 +272,7 @@ export default function Dashboard() {
                             <td className="text-emerald-400">{formatMoney(m.entradas)}</td>
                             <td className="text-red-400">{formatMoney(m.salidas)}</td>
                             <td>{formatMoney(m.reinversiones)}</td>
-                            <td className={m.neto >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatMoney(m.neto)}</td>
+                            <td><Money value={m.neto} signed /></td>
                           </tr>
                         ))}
                       </tbody>
@@ -341,9 +369,9 @@ export default function Dashboard() {
                         <td>{c.unidades_vendidas}</td>
                         <td>{Number(c.pct_vendido || 0).toFixed(0)}%</td>
                         <td>{formatMoney(c.ingresos)}</td>
-                        <td className={c.utilidad >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatMoney(c.utilidad)}</td>
-                        <td>{Number(c.margen || 0).toFixed(1)}%</td>
-                        <td>{Number(c.roi || 0).toFixed(1)}%</td>
+                        <td><Money value={c.utilidad} signed /></td>
+                        <td><Money value={c.margen} percent signed /></td>
+                        <td><Money value={c.roi} percent signed /></td>
                         <td>{c.dias_promedio_venta != null ? `${c.dias_promedio_venta}d` : '—'}</td>
                         <td>
                           {c.recuperado
@@ -394,9 +422,9 @@ export default function Dashboard() {
                         <td>{formatMoney(p.valor_stock)}</td>
                         <td>{p.unidades_vendidas}</td>
                         <td>{formatMoney(p.ingresos)}</td>
-                        <td className={p.utilidad >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatMoney(p.utilidad)}</td>
-                        <td>{Number(p.margen || 0).toFixed(1)}%</td>
-                        <td>{Number(p.roi || 0).toFixed(1)}%</td>
+                        <td><Money value={p.utilidad} signed /></td>
+                        <td><Money value={p.margen} percent signed /></td>
+                        <td><Money value={p.roi} percent signed /></td>
                         <td>{p.dias_promedio_venta != null ? `${p.dias_promedio_venta} días` : '—'}</td>
                         <td><BadgeRec rec={p.recomendacion} /></td>
                       </tr>
@@ -427,7 +455,7 @@ export default function Dashboard() {
                     <td>{c.canal}</td>
                     <td>{c.ventas}</td>
                     <td>{formatMoney(c.total)}</td>
-                    <td className="text-emerald-400">{formatMoney(c.utilidad)}</td>
+                    <td><Money value={c.utilidad} signed /></td>
                   </tr>
                 ))}
               </tbody>
@@ -475,8 +503,8 @@ export default function Dashboard() {
                   <tr key={i}>
                     <td>{p.producto_nombre}</td>
                     <td>{p.vendidos}</td>
-                    <td className="text-emerald-400">{formatMoney(p.utilidad)}</td>
-                    <td>{Number(p.margen || 0).toFixed(1)}%</td>
+                    <td><Money value={p.utilidad} signed /></td>
+                    <td><Money value={p.margen} percent signed /></td>
                   </tr>
                 ))}
               </tbody>
@@ -490,8 +518,8 @@ export default function Dashboard() {
                   <tr key={i}>
                     <td>{p.producto_nombre}</td>
                     <td>{p.vendidos}</td>
-                    <td className={Number(p.utilidad) >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatMoney(p.utilidad)}</td>
-                    <td>{Number(p.margen || 0).toFixed(1)}%</td>
+                    <td><Money value={p.utilidad} signed /></td>
+                    <td><Money value={p.margen} percent signed /></td>
                   </tr>
                 ))}
               </tbody>

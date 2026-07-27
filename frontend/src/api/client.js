@@ -120,8 +120,35 @@ export const api = {
   exportCsv: (tabla) => window.open(`${API}/backup/export/${tabla}`, '_blank'),
 };
 
-export function formatMoney(n) {
-  return new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB', minimumFractionDigits: 2 }).format(n || 0);
+export function moneyTone(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || Math.abs(v) < 0.005) return 'zero';
+  return v > 0 ? 'pos' : 'neg';
+}
+
+export function moneyClass(n) {
+  const t = moneyTone(n);
+  if (t === 'pos') return 'money-pos';
+  if (t === 'neg') return 'money-neg';
+  return 'money-zero';
+}
+
+export function formatMoney(n, opts = {}) {
+  const v = Number(n || 0);
+  const formatted = new Intl.NumberFormat('es-BO', {
+    style: 'currency',
+    currency: 'BOB',
+    minimumFractionDigits: 2,
+  }).format(v);
+  if (opts.signed && v > 0) return `+${formatted}`;
+  return formatted;
+}
+
+export function formatPercent(n, opts = {}) {
+  const v = Number(n || 0);
+  const txt = `${v.toFixed(1)}%`;
+  if (opts.signed && v > 0) return `+${txt}`;
+  return txt;
 }
 
 export function formatDate(d) {

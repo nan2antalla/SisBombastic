@@ -43,13 +43,16 @@ function moneyTooltip({ active, payload, label }) {
   return (
     <div className="bg-[#111] border border-[#2a2a2a] rounded-lg px-3 py-2 text-xs shadow-lg">
       <p className="text-gray-400 mb-1">{label}</p>
-      {payload.map((p) => (
-        <p key={p.dataKey} style={{ color: p.color || BRAND }}>
-          {p.name}: {typeof p.value === 'number' && (p.dataKey === 'vendidos' || p.dataKey === 'cantidad' || p.dataKey === 'ventas_count')
-            ? p.value
-            : formatMoney(p.value)}
-        </p>
-      ))}
+      {payload.map((p) => {
+        const isCount = p.dataKey === 'vendidos' || p.dataKey === 'cantidad' || p.dataKey === 'ventas_count';
+        const neg = !isCount && Number(p.value) < 0;
+        return (
+          <p key={p.dataKey} style={{ color: neg ? RED : (p.color || BRAND) }}>
+            {p.name}: {isCount ? p.value : formatMoney(p.value)}
+            {neg ? ' (pérdida)' : ''}
+          </p>
+        );
+      })}
     </div>
   );
 }
@@ -174,7 +177,11 @@ export default function DashboardCharts({ graficos }) {
               <Tooltip content={moneyTooltip} />
               <Legend />
               <Bar dataKey="total" name="Ingresos" fill={BRAND} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="utilidad" name="Utilidad" fill={GREEN} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="utilidad" name="Utilidad" radius={[4, 4, 0, 0]}>
+                {porCanal.map((p, i) => (
+                  <Cell key={i} fill={Number(p.utilidad) >= 0 ? GREEN : RED} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
