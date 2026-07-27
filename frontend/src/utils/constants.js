@@ -69,7 +69,7 @@ export const CATEGORIAS_GASTO = [
 
 export const TIPOS_CAJA = [
   { value: 'retiro_personal', label: 'Retiro personal' },
-  { value: 'inversion', label: 'Inversión recibida' },
+  { value: 'inversion', label: 'Inversión externa (capital nuevo)' },
   { value: 'ajuste', label: 'Ajuste manual' },
 ];
 

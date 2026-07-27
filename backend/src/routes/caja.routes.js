@@ -4,6 +4,10 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = Router();
 
+router.get('/efectivo', asyncHandler(async (req, res) => {
+  res.json(await cajaService.resumenEfectivo());
+}));
+
 router.get('/saldo', asyncHandler(async (req, res) => {
   res.json({ saldo: await cajaService.saldoActual() });
 }));

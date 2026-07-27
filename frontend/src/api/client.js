@@ -93,6 +93,7 @@ export const api = {
 
   caja: {
     saldo: () => request('/caja/saldo'),
+    efectivo: () => request('/caja/efectivo'),
     movimientos: (params = {}) => request(`/caja/movimientos?${new URLSearchParams(params)}`),
     resumen: (fecha) => request(`/caja/resumen/${fecha}`),
     cierres: () => request('/caja/cierres'),

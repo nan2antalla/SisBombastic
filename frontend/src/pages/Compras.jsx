@@ -20,6 +20,7 @@ const emptyForm = {
   otros_gastos: '',
   estado: 'en_camino',
   es_caja: true,
+  pagado_desde_caja: true,
 };
 
 export default function Compras() {
@@ -50,6 +51,7 @@ export default function Compras() {
       ...c,
       proveedor_id: c.proveedor_id || '',
       es_caja: c.es_caja !== false && c.es_caja !== 0,
+      pagado_desde_caja: c.pagado_desde_caja !== false && c.pagado_desde_caja !== 0,
     });
     setEditId(c.id);
     setError('');
@@ -74,6 +76,7 @@ export default function Compras() {
         transporte: Number(form.transporte || 0),
         impuestos: Number(form.impuestos || 0),
         otros_gastos: Number(form.otros_gastos || 0),
+        pagado_desde_caja: !!form.pagado_desde_caja,
       };
       if (editId) await api.compras.update(editId, data);
       else await api.compras.create(data);
@@ -130,6 +133,7 @@ export default function Compras() {
               <th>Cant.</th>
               <th>Costo total</th>
               <th>Unitario</th>
+              <th>Pago</th>
               <th>Estado</th>
               <th></th>
             </tr>
@@ -144,6 +148,11 @@ export default function Compras() {
                 <td>{c.cantidad}</td>
                 <td>{formatMoney(c.costo_total)}</td>
                 <td>{formatMoney(c.costo_unitario)}</td>
+                <td>
+                  {c.pagado_desde_caja !== false && c.pagado_desde_caja !== 0
+                    ? <span className="badge bg-[#ffcc00]/20 text-[#ffcc00]">Reinversión</span>
+                    : <span className="badge bg-white/10 text-gray-400">Fuera de caja</span>}
+                </td>
                 <td><Badge label={labelOf(ESTADOS_COMPRA, c.estado)} colorClass={badgeClass(ESTADOS_COMPRA, c.estado)} /></td>
                 <td className="space-x-2 whitespace-nowrap">
                   <button className="btn-secondary text-xs py-1" onClick={() => openEdit(c)}>Editar</button>
@@ -154,7 +163,7 @@ export default function Compras() {
               </tr>
             ))}
             {compras.length === 0 && (
-              <tr><td colSpan={9} className="text-center text-gray-400 py-8">No hay compras registradas</td></tr>
+              <tr><td colSpan={10} className="text-center text-gray-400 py-8">No hay compras registradas</td></tr>
             )}
           </tbody>
           </table>
@@ -214,11 +223,28 @@ export default function Compras() {
             <input value={form.descripcion} onChange={set('descripcion')} required placeholder="Ej: Case A 2025" />
           </div>
           {form.tipo_compra === 'mainline' && (
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={form.es_caja} onChange={(e) => setForm({ ...form, es_caja: e.target.checked })} />
+            <label className="flex items-center gap-2 text-sm min-h-[44px]">
+              <input type="checkbox" className="!min-h-0 w-4 h-4" checked={form.es_caja} onChange={(e) => setForm({ ...form, es_caja: e.target.checked })} />
               Es caja cerrada (case)
             </label>
           )}
+          <div className="panel-muted space-y-2">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="!min-h-0 w-4 h-4 mt-1"
+                checked={!!form.pagado_desde_caja}
+                onChange={(e) => setForm({ ...form, pagado_desde_caja: e.target.checked })}
+              />
+              <span>
+                <strong className="text-[#ffcc00]">Pagado con dinero de la caja (reinversión)</strong>
+                <span className="block text-xs text-gray-400 mt-1">
+                  Si está marcado, esta compra SE RESTA del dinero esperado en banco/caja.
+                  Desmárcalo solo si pagaste con plata personal/externa que no salió de la caja.
+                </span>
+              </span>
+            </label>
+          </div>
           <div className="form-grid">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cantidad</label>

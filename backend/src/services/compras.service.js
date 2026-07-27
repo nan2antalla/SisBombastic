@@ -1,11 +1,16 @@
 import { getOne, getAll, query } from '../db/database.js';
 import { calcularCostoTotal, calcularCostoUnitario, generarCodigoInterno } from '../utils/calculos.js';
 import * as proveedoresService from './proveedores.service.js';
+import * as cajaService from './caja.service.js';
 
 const TIPOS_COMPRA_A_CATEGORIA = {
   mainline: 'mainline', premium: 'premium', rlc: 'rlc', protector: 'protector',
   sticker: 'sticker', tarjeta: 'tarjeta', accesorio: 'accesorio', otro: 'otro',
 };
+
+function esPagadoDesdeCaja(data) {
+  return data.pagado_desde_caja !== false && data.pagado_desde_caja !== 0 && data.pagado_desde_caja !== '0';
+}
 
 async function resolverProveedor(data) {
   let proveedorId = data.proveedor_id || null;
@@ -25,6 +30,20 @@ async function resolverProveedor(data) {
   }
 
   return { proveedorId: null, proveedorNombre: null };
+}
+
+async function sincronizarCajaCompra(compra) {
+  if (!compra) return;
+  if (esPagadoDesdeCaja(compra)) {
+    await cajaService.registrarSalidaCompra(
+      compra.id,
+      Number(compra.costo_total || 0),
+      compra.fecha,
+      `Reinversión: ${compra.descripcion || `compra #${compra.id}`}`
+    );
+  } else {
+    await cajaService.eliminarSalidaCompra(compra.id);
+  }
 }
 
 export async function listarCompras(filtros = {}) {
@@ -49,17 +68,19 @@ export async function crearCompra(data) {
   const costoUnitario = calcularCostoUnitario(costoTotal, data.cantidad);
   const { proveedorId, proveedorNombre } = await resolverProveedor(data);
   const estado = data.estado || 'en_camino';
+  const pagadoDesdeCaja = esPagadoDesdeCaja(data);
 
   const res = await query(`
     INSERT INTO compras (
       fecha, proveedor_id, proveedor_nombre, tipo_compra, descripcion, cantidad,
-      costo_producto, transporte, impuestos, otros_gastos, costo_total, costo_unitario, es_caja, estado
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id
+      costo_producto, transporte, impuestos, otros_gastos, costo_total, costo_unitario,
+      es_caja, pagado_desde_caja, estado
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id
   `, [
     data.fecha, proveedorId, proveedorNombre,
     data.tipo_compra, data.descripcion, data.cantidad,
     data.costo_producto || 0, data.transporte || 0, data.impuestos || 0, data.otros_gastos || 0,
-    costoTotal, costoUnitario, data.es_caja !== false, estado,
+    costoTotal, costoUnitario, data.es_caja !== false, pagadoDesdeCaja, estado,
   ]);
 
   const compraId = res.rows[0].id;
@@ -68,7 +89,9 @@ export async function crearCompra(data) {
     await ingresarCompraAInventario(compraId);
   }
 
-  return obtenerCompra(compraId);
+  const compra = await obtenerCompra(compraId);
+  await sincronizarCajaCompra(compra);
+  return compra;
 }
 
 export async function actualizarCompra(id, data) {
@@ -80,25 +103,31 @@ export async function actualizarCompra(id, data) {
   const costoUnitario = calcularCostoUnitario(costoTotal, merged.cantidad);
   const estadoAnterior = actual.estado;
   const nuevoEstado = merged.estado;
+  const pagadoDesdeCaja = esPagadoDesdeCaja(merged);
 
   await query(`
     UPDATE compras SET
       fecha=$1, proveedor_id=$2, proveedor_nombre=$3, tipo_compra=$4, descripcion=$5,
       cantidad=$6, costo_producto=$7, transporte=$8, impuestos=$9, otros_gastos=$10,
-      costo_total=$11, costo_unitario=$12, es_caja=$13, estado=$14, updated_at=NOW()
-    WHERE id=$15
+      costo_total=$11, costo_unitario=$12, es_caja=$13, pagado_desde_caja=$14, estado=$15, updated_at=NOW()
+    WHERE id=$16
   `, [
     merged.fecha, merged.proveedor_id || null, merged.proveedor_nombre || null,
     merged.tipo_compra, merged.descripcion, merged.cantidad,
     merged.costo_producto, merged.transporte, merged.impuestos, merged.otros_gastos,
-    costoTotal, costoUnitario, merged.es_caja !== false && merged.es_caja !== 0, nuevoEstado, id,
+    costoTotal, costoUnitario,
+    merged.es_caja !== false && merged.es_caja !== 0,
+    pagadoDesdeCaja,
+    nuevoEstado, id,
   ]);
 
   if (estadoAnterior !== 'recibido' && nuevoEstado === 'recibido') {
     await ingresarCompraAInventario(id);
   }
 
-  return obtenerCompra(id);
+  const compra = await obtenerCompra(id);
+  await sincronizarCajaCompra(compra);
+  return compra;
 }
 
 async function ingresarCompraAInventario(compraId) {
@@ -131,6 +160,7 @@ export async function eliminarCompra(id) {
   if (compra.estado === 'recibido') {
     throw new Error('No se puede eliminar una compra ya recibida en inventario');
   }
+  await cajaService.eliminarSalidaCompra(id);
   await query('DELETE FROM compras WHERE id = $1', [id]);
   return true;
 }

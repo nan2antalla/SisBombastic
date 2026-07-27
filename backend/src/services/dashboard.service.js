@@ -365,6 +365,7 @@ export async function obtenerDashboardDecisiones() {
     stockCriticoRows,
     ventasPorDia,
     gastosPorCat,
+    efectivo,
   ] = await Promise.all([
     ventasService.ventasDelPeriodo(fechaHoy, fechaHoy),
     ventasService.ventasDelPeriodo(desdeMes, hastaMes),
@@ -381,6 +382,7 @@ export async function obtenerDashboardDecisiones() {
     stockCritico(),
     ventasService.ventasPorDia(haceDias(29), fechaHoy),
     gastosService.gastosPorCategoria(desdeMes, hastaMes),
+    cajaService.resumenEfectivo(),
   ]);
 
   const utilidadNetaMes = n(ventasMes?.utilidad_bruta) - n(gastosMes?.total);
@@ -402,6 +404,7 @@ export async function obtenerDashboardDecisiones() {
     utilidad_neta_mes: utilidadNetaMes,
     dinero_caja: dineroCaja,
     valor_inventario: capitalInventario,
+    efectivo,
     autos_vendidos_mes: autosVendidos,
     margen_promedio: margenMes,
     gastos_mes: n(gastosMes?.total),

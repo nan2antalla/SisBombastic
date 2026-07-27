@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS compras (
   costo_total NUMERIC NOT NULL DEFAULT 0,
   costo_unitario NUMERIC NOT NULL DEFAULT 0,
   es_caja BOOLEAN DEFAULT TRUE,
+  pagado_desde_caja BOOLEAN DEFAULT TRUE,
   estado TEXT NOT NULL DEFAULT 'en_camino' CHECK (estado IN (
     'en_camino', 'recibido', 'vendido_parcialmente', 'cerrado'
   )),

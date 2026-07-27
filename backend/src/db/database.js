@@ -57,6 +57,14 @@ export async function withTransaction(fn) {
 export async function initDb() {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
   await pool.query(schema);
+
+  // Migraciones ligeras (tablas ya existentes)
+  const migraciones = [
+    `ALTER TABLE compras ADD COLUMN IF NOT EXISTS pagado_desde_caja BOOLEAN DEFAULT TRUE`,
+  ];
+  for (const sql of migraciones) {
+    try { await pool.query(sql); } catch { /* ya aplicada o no aplica */ }
+  }
 }
 
 export { pool };

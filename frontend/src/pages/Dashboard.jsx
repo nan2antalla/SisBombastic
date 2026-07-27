@@ -61,6 +61,7 @@ export default function Dashboard() {
 
   const tabs = [
     { id: 'resumen', label: 'Resumen' },
+    { id: 'banco', label: 'Dinero / Banco' },
     { id: 'graficos', label: 'Gráficos' },
     { id: 'cajas', label: 'Por caja' },
     { id: 'proveedores', label: 'Proveedores' },
@@ -100,7 +101,7 @@ export default function Dashboard() {
               positive={data.utilidad_neta_mes >= 0}
               negative={data.utilidad_neta_mes < 0}
             />
-            <StatCard label="Dinero en caja" value={formatMoney(data.dinero_caja)} />
+            <StatCard label="Dinero esperado (banco)" value={formatMoney(data.efectivo?.dinero_esperado_banco ?? data.dinero_caja)} hint="Lo que deberías tener en efectivo" />
             <StatCard label="Capital en inventario" value={formatMoney(data.valor_inventario)} hint="Dinero trabado en stock" />
             <StatCard label="Autos vendidos (mes)" value={data.autos_vendidos_mes} />
             <StatCard label="Margen promedio" value={`${Number(data.margen_promedio || 0).toFixed(1)}%`} positive />
@@ -179,6 +180,122 @@ export default function Dashboard() {
           </div>
         </>
       )}
+
+      {tab === 'banco' && (() => {
+        const e = data.efectivo || {};
+        const d = e.desglose || {};
+        return (
+          <div className="space-y-4 sm:space-y-6">
+            <div className="card border-[#ffcc00]/40">
+              <p className="stat-label">Dinero que deberías tener en el banco / caja</p>
+              <p className={`text-4xl sm:text-5xl font-bold mt-2 ${Number(e.dinero_esperado_banco) >= 0 ? 'text-[#ffcc00]' : 'text-red-400'}`}>
+                {formatMoney(e.dinero_esperado_banco)}
+              </p>
+              <p className="text-sm text-gray-400 mt-3">
+                Fórmula: <span className="text-gray-300">{e.formula}</span>
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Patrimonio aproximado (banco + inventario): <strong className="text-white">{formatMoney(e.patrimonio_aproximado)}</strong>
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+              <StatCard label="(+) Ventas" value={formatMoney(d.ventas)} positive />
+              <StatCard label="(+) Inversión externa" value={formatMoney(d.inversiones_externas)} hint="Capital nuevo que metiste" />
+              <StatCard label="(−) Reinversiones" value={formatMoney(d.reinversiones_compras)} negative hint="Compras pagadas con plata de la caja" />
+              <StatCard label="(−) Gastos" value={formatMoney(d.gastos)} negative />
+              <StatCard label="(−) Retiros personales" value={formatMoney(d.retiros_personales)} negative />
+              <StatCard label="Capital en inventario" value={formatMoney(e.valor_inventario)} hint="No es efectivo, es stock" />
+            </div>
+
+            <Section title="Cómo leerlo" subtitle="Para no confundir utilidad con efectivo">
+              <ul className="space-y-2 text-sm text-gray-300">
+                {(e.explicacion || []).map((t, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-[#ffcc00]">•</span>
+                    <span>{t}</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+
+            <div className="grid md:grid-cols-2 gap-4 sm:gap-6">
+              <Section title="Histórico mensual" subtitle="Entradas vs salidas por mes">
+                {(e.por_mes || []).length === 0 ? (
+                  <p className="text-gray-400 text-sm">Sin movimientos aún</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Mes</th>
+                          <th>Entradas</th>
+                          <th>Salidas</th>
+                          <th>Reinversión</th>
+                          <th>Neto</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {e.por_mes.map((m) => (
+                          <tr key={m.periodo}>
+                            <td>{m.periodo}</td>
+                            <td className="text-emerald-400">{formatMoney(m.entradas)}</td>
+                            <td className="text-red-400">{formatMoney(m.salidas)}</td>
+                            <td>{formatMoney(m.reinversiones)}</td>
+                            <td className={m.neto >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatMoney(m.neto)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Section>
+
+              <Section title="Últimos movimientos" subtitle="Historial reciente de efectivo">
+                {(e.historico || []).length === 0 ? (
+                  <p className="text-gray-400 text-sm">Sin movimientos</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Tipo</th>
+                          <th>Descripción</th>
+                          <th>Monto</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {e.historico.slice(0, 15).map((m, i) => {
+                          const entrada = m.tipo === 'entrada_venta' || m.tipo === 'inversion';
+                          const tipoTxt = {
+                            entrada_venta: 'Venta',
+                            inversion: 'Inversión externa',
+                            salida_compra: 'Reinversión',
+                            salida_gasto: 'Gasto',
+                            retiro_personal: 'Retiro',
+                            ajuste: 'Ajuste',
+                          }[m.tipo] || m.tipo;
+                          return (
+                            <tr key={i}>
+                              <td>{String(m.fecha).slice(0, 10)}</td>
+                              <td>{tipoTxt}</td>
+                              <td className="max-w-[160px] truncate">{m.descripcion || '-'}</td>
+                              <td className={entrada ? 'text-emerald-400' : 'text-red-400'}>
+                                {entrada ? '+' : '−'}{formatMoney(m.monto)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Section>
+            </div>
+          </div>
+        );
+      })()}
 
       {tab === 'graficos' && <DashboardCharts graficos={data.graficos} />}
 
