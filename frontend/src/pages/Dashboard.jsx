@@ -201,11 +201,13 @@ export default function Dashboard() {
 
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               <StatCard label="(+) Ventas" value={formatMoney(d.ventas)} positive />
-              <StatCard label="(+) Inversión externa" value={formatMoney(d.inversiones_externas)} hint="Capital nuevo que metiste" />
+              <StatCard label="(+) Inversión externa (caja)" value={formatMoney(d.inversiones_externas)} hint="Capital nuevo registrado en Caja" />
               <StatCard label="(−) Reinversiones" value={formatMoney(d.reinversiones_compras)} negative hint="Compras pagadas con plata de la caja" />
+              <StatCard label="Compras externas" value={formatMoney(d.compras_externas)} hint="Pagadas afuera: no restan del banco" />
               <StatCard label="(−) Gastos" value={formatMoney(d.gastos)} negative />
               <StatCard label="(−) Retiros personales" value={formatMoney(d.retiros_personales)} negative />
               <StatCard label="Capital en inventario" value={formatMoney(e.valor_inventario)} hint="No es efectivo, es stock" />
+              <StatCard label="Patrimonio aprox." value={formatMoney(e.patrimonio_aproximado)} hint="Banco + inventario" />
             </div>
 
             <Section title="Cómo leerlo" subtitle="Para no confundir utilidad con efectivo">

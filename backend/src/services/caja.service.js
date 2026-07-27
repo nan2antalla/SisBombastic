@@ -143,6 +143,13 @@ export async function resumenEfectivo() {
 
   const valorInventario = await inventarioService.valorTotalInventario();
 
+  const comprasExt = await getOne(`
+    SELECT COALESCE(SUM(costo_total), 0) AS total
+    FROM compras
+    WHERE pagado_desde_caja = FALSE
+  `);
+  const comprasExternas = Number(comprasExt?.total || 0);
+
   const historico = await getAll(`
     SELECT fecha, tipo, monto, descripcion, referencia_tipo, referencia_id, created_at
     FROM caja_movimientos
@@ -170,19 +177,22 @@ export async function resumenEfectivo() {
       ventas,
       inversiones_externas: inversiones,
       reinversiones_compras: reinversiones,
+      compras_externas: comprasExternas,
       gastos,
       retiros_personales: retiros,
       ajustes,
       total_entradas: totalEntradas,
       total_salidas: totalSalidas,
     },
-    formula: 'Ventas + Inversión externa − Reinversiones (compras) − Gastos − Retiros − Ajustes',
+    formula: 'Ventas + Inversión externa − Reinversiones (compras de la caja) − Gastos − Retiros − Ajustes',
     explicacion: [
-      'Dinero esperado en banco/caja = lo que entró menos lo que salió.',
-      'Las ventas y las inversiones externas SUMAN.',
-      'Si una compra se marca como reinversión (pagada con plata de la caja), RESTA.',
-      'Los gastos y retiros personales también RESTAN.',
-      'El inventario es capital en productos, no efectivo en el banco.',
+      'Dinero esperado en banco/caja = lo que entró menos lo que salió del efectivo.',
+      'Las ventas SUMAN (plata que cobraste).',
+      'Inversión externa SUMAN solo si la registras en Caja como “Inversión recibida” (plata nueva que metiste).',
+      'Reinversión: compra pagada con plata de la caja → RESTA del banco (aunque siga siendo capital en inventario).',
+      'Inversión externa en compra: pagaste con plata de afuera → NO resta de la caja.',
+      'Gastos y retiros personales también RESTAN.',
+      'Inventario = capital en productos. Patrimonio ≈ banco + inventario.',
     ],
     historico,
     por_mes: porMes.map((r) => ({

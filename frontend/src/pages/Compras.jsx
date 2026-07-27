@@ -150,8 +150,8 @@ export default function Compras() {
                 <td>{formatMoney(c.costo_unitario)}</td>
                 <td>
                   {c.pagado_desde_caja !== false && c.pagado_desde_caja !== 0
-                    ? <span className="badge bg-[#ffcc00]/20 text-[#ffcc00]">Reinversión</span>
-                    : <span className="badge bg-white/10 text-gray-400">Fuera de caja</span>}
+                    ? <span className="badge bg-[#ffcc00]/20 text-[#ffcc00]">Reinversión (caja)</span>
+                    : <span className="badge bg-sky-500/15 text-sky-300">Inversión externa</span>}
                 </td>
                 <td><Badge label={labelOf(ESTADOS_COMPRA, c.estado)} colorClass={badgeClass(ESTADOS_COMPRA, c.estado)} /></td>
                 <td className="space-x-2 whitespace-nowrap">
@@ -228,22 +228,23 @@ export default function Compras() {
               Es caja cerrada (case)
             </label>
           )}
-          <div className="panel-muted space-y-2">
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="!min-h-0 w-4 h-4 mt-1"
-                checked={!!form.pagado_desde_caja}
-                onChange={(e) => setForm({ ...form, pagado_desde_caja: e.target.checked })}
-              />
-              <span>
-                <strong className="text-[#ffcc00]">Pagado con dinero de la caja (reinversión)</strong>
-                <span className="block text-xs text-gray-400 mt-1">
-                  Si está marcado, esta compra SE RESTA del dinero esperado en banco/caja.
-                  Desmárcalo solo si pagaste con plata personal/externa que no salió de la caja.
-                </span>
-              </span>
-            </label>
+          <div className="panel-muted space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1">¿Con qué dinero pagas esta compra? *</label>
+              <select
+                value={form.pagado_desde_caja ? 'caja' : 'externo'}
+                onChange={(e) => setForm({ ...form, pagado_desde_caja: e.target.value === 'caja' })}
+                required
+              >
+                <option value="caja">Reinversión — sale de la caja/banco</option>
+                <option value="externo">Inversión externa — plata de afuera (NO sale de la caja)</option>
+              </select>
+            </div>
+            <p className="text-xs text-gray-400">
+              {form.pagado_desde_caja
+                ? 'Esta compra se restará del dinero esperado en banco/caja (reutilizas lo que ya ganaste o tenías).'
+                : 'Esta compra NO resta de la caja. Úsala si pagaste con capital personal/externo que nunca estuvo en la caja.'}
+            </p>
           </div>
           <div className="form-grid">
             <div>

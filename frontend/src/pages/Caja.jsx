@@ -106,18 +106,17 @@ export default function Caja() {
           <span className="stat-value negative">{formatMoney(d.reinversiones_compras)}</span>
         </div>
         <div className="stat-card">
+          <span className="stat-label">Compras externas</span>
+          <span className="stat-value">{formatMoney(d.compras_externas)}</span>
+          <span className="text-xs text-gray-500">No restan del banco</span>
+        </div>
+        <div className="stat-card">
           <span className="stat-label">(−) Gastos</span>
           <span className="stat-value negative">{formatMoney(d.gastos)}</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">(−) Retiros</span>
           <span className="stat-value negative">{formatMoney(d.retiros_personales)}</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Saldo del día</span>
-          <span className={`stat-value ${(resumen?.saldo_final ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-            {formatMoney(resumen?.saldo_final)}
-          </span>
         </div>
       </div>
 
