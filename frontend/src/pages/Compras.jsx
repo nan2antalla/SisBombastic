@@ -32,8 +32,14 @@ export default function Compras() {
   const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState(null);
   const [error, setError] = useState('');
+  const [filtros, setFiltros] = useState({
+    estado: '',
+    desde: '',
+    hasta: '',
+    busqueda: '',
+  });
 
-  const load = () => api.compras.list().then(setCompras).catch(console.error);
+  const load = (params = {}) => api.compras.list(params).then(setCompras).catch(console.error);
   const loadProveedores = () => api.proveedores.list().then(setProveedores).catch(console.error);
 
   useEffect(() => {
@@ -111,7 +117,29 @@ export default function Compras() {
   };
 
   const set = (field) => (e) => setForm({ ...form, [field]: e.target.value });
-  const pager = usePagination(compras, 10);
+  const comprasFiltradas = compras.filter((c) => {
+    const q = filtros.busqueda.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      String(c.proveedor_nombre || '').toLowerCase().includes(q) ||
+      String(c.descripcion || '').toLowerCase().includes(q) ||
+      String(c.tipo_compra || '').toLowerCase().includes(q)
+    );
+  });
+  const pager = usePagination(comprasFiltradas, 10);
+
+  const aplicarFiltros = () => {
+    const params = {};
+    if (filtros.estado) params.estado = filtros.estado;
+    if (filtros.desde) params.desde = filtros.desde;
+    if (filtros.hasta) params.hasta = filtros.hasta;
+    load(params);
+  };
+
+  const limpiarFiltros = () => {
+    setFiltros({ estado: '', desde: '', hasta: '', busqueda: '' });
+    load();
+  };
 
   return (
     <div>
@@ -122,6 +150,23 @@ export default function Compras() {
       />
 
       <div className="card">
+        <div className="grid md:grid-cols-5 gap-2 mb-4">
+          <input
+            placeholder="Buscar proveedor/descripcion/tipo..."
+            value={filtros.busqueda}
+            onChange={(e) => setFiltros({ ...filtros, busqueda: e.target.value })}
+          />
+          <select value={filtros.estado} onChange={(e) => setFiltros({ ...filtros, estado: e.target.value })}>
+            <option value="">Todos los estados</option>
+            {ESTADOS_COMPRA.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+          </select>
+          <input type="date" value={filtros.desde} onChange={(e) => setFiltros({ ...filtros, desde: e.target.value })} />
+          <input type="date" value={filtros.hasta} onChange={(e) => setFiltros({ ...filtros, hasta: e.target.value })} />
+          <div className="flex gap-2">
+            <button type="button" className="btn-primary w-full" onClick={aplicarFiltros}>Filtrar</button>
+            <button type="button" className="btn-secondary w-full" onClick={limpiarFiltros}>Limpiar</button>
+          </div>
+        </div>
         <div className="table-wrap">
           <table>
           <thead>
@@ -162,7 +207,7 @@ export default function Compras() {
                 </td>
               </tr>
             ))}
-            {compras.length === 0 && (
+            {comprasFiltradas.length === 0 && (
               <tr><td colSpan={10} className="text-center text-gray-400 py-8">No hay compras registradas</td></tr>
             )}
           </tbody>

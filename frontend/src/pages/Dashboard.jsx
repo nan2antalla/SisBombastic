@@ -50,6 +50,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('resumen');
+  const [buscaCaja, setBuscaCaja] = useState('');
+  const [buscaProveedor, setBuscaProveedor] = useState('');
+  const [buscaCliente, setBuscaCliente] = useState('');
 
   useEffect(() => {
     api.dashboard()
@@ -58,8 +61,29 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  const cajasPager = usePagination(data?.cajas_todas || [], 10);
-  const provPager = usePagination(data?.proveedores || [], 10);
+  const cajasFiltradas = (data?.cajas_todas || []).filter((c) => {
+    const q = buscaCaja.toLowerCase();
+    return (
+      String(c.nombre || '').toLowerCase().includes(q) ||
+      String(c.codigo_interno || '').toLowerCase().includes(q) ||
+      String(c.proveedor_nombre || '').toLowerCase().includes(q)
+    );
+  });
+  const proveedoresFiltrados = (data?.proveedores || []).filter((p) => {
+    const q = buscaProveedor.toLowerCase();
+    return String(p.proveedor || '').toLowerCase().includes(q);
+  });
+  const cajasPager = usePagination(cajasFiltradas, 10);
+  const provPager = usePagination(proveedoresFiltrados, 10);
+  const clientesTopCompras = (data?.clientes?.clientes_top_compras || []).filter((c) =>
+    String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
+  );
+  const clientesTopUtilidad = (data?.clientes?.clientes_top_utilidad || []).filter((c) =>
+    String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
+  );
+  const clientesMejorMargen = (data?.clientes?.clientes_mejor_margen || []).filter((c) =>
+    String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
+  );
 
   if (loading) return <p className="text-gray-500">Cargando métricas de decisión...</p>;
   if (error) return <p className="text-red-500">{error}</p>;
@@ -69,6 +93,7 @@ export default function Dashboard() {
     { id: 'resumen', label: 'Resumen' },
     { id: 'banco', label: 'Dinero / Banco' },
     { id: 'graficos', label: 'Gráficos' },
+    { id: 'clientes', label: 'Clientes' },
     { id: 'cajas', label: 'Por caja' },
     { id: 'proveedores', label: 'Proveedores' },
     { id: 'velocidad', label: 'Velocidad de venta' },
@@ -329,6 +354,97 @@ export default function Dashboard() {
 
       {tab === 'graficos' && <DashboardCharts graficos={data.graficos} />}
 
+      {tab === 'clientes' && (
+        <div className="space-y-6">
+          <div className="grid md:grid-cols-4 gap-4">
+            <div className="card">
+              <p className="stat-label">Clientes activos</p>
+              <p className="text-2xl font-bold">{data.clientes?.resumen?.activos ?? 0}</p>
+            </div>
+            <div className="card">
+              <p className="stat-label">Clientes recurrentes</p>
+              <p className="text-2xl font-bold text-[#ffcc00]">{data.clientes?.resumen?.compradores_recurrentes ?? 0}</p>
+            </div>
+            <div className="card">
+              <p className="stat-label">Recurrencia</p>
+              <p className="text-2xl font-bold">
+                <Money value={data.clientes?.resumen?.recurrencia_pct ?? 0} percent signed />
+              </p>
+            </div>
+            <div className="card">
+              <p className="stat-label">Margen global clientes</p>
+              <p className="text-2xl font-bold">
+                <Money value={data.clientes?.resumen?.margen_global ?? 0} percent signed />
+              </p>
+            </div>
+          </div>
+
+          <div className="card">
+            <input
+              placeholder="Buscar cliente en todas las tablas..."
+              value={buscaCliente}
+              onChange={(e) => setBuscaCliente(e.target.value)}
+            />
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6">
+            <Section title="Top clientes por compra" subtitle="Los que más dinero compran">
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Cliente</th><th>Compras</th><th>Total</th><th>Ticket</th></tr></thead>
+                  <tbody>
+                    {clientesTopCompras.map((c, i) => (
+                      <tr key={`${c.cliente_id}-${i}`}>
+                        <td>{c.cliente_nombre}</td>
+                        <td>{c.num_compras}</td>
+                        <td>{formatMoney(c.total_comprado)}</td>
+                        <td>{formatMoney(c.ticket_promedio)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            <Section title="Top clientes por utilidad" subtitle="Los que más ganancia dejan">
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Cliente</th><th>Utilidad</th><th>Total</th><th>Margen</th></tr></thead>
+                  <tbody>
+                    {clientesTopUtilidad.map((c, i) => (
+                      <tr key={`${c.cliente_id}-${i}`}>
+                        <td>{c.cliente_nombre}</td>
+                        <td><Money value={c.utilidad_total} signed /></td>
+                        <td>{formatMoney(c.total_comprado)}</td>
+                        <td><Money value={c.margen_promedio} percent signed /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            <Section title="Mejor margen por cliente" subtitle="Solo clientes con 2+ compras">
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Cliente</th><th>Compras</th><th>Margen</th><th>Utilidad</th></tr></thead>
+                  <tbody>
+                    {clientesMejorMargen.map((c, i) => (
+                      <tr key={`${c.cliente_id}-${i}`}>
+                        <td>{c.cliente_nombre}</td>
+                        <td>{c.num_compras}</td>
+                        <td><Money value={c.margen_promedio} percent signed /></td>
+                        <td><Money value={c.utilidad_total} signed /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          </div>
+        </div>
+      )}
+
       {tab === 'cajas' && (
         <Section
           title="Rentabilidad por caja"
@@ -338,6 +454,13 @@ export default function Dashboard() {
             <p className="text-gray-400 text-sm">Aún no hay cajas abiertas con ventas asociadas. Abre cajas desde Inventario y vende esos autos.</p>
           ) : (
             <>
+              <div className="mb-4">
+                <input
+                  placeholder="Buscar caja, código o proveedor..."
+                  value={buscaCaja}
+                  onChange={(e) => setBuscaCaja(e.target.value)}
+                />
+              </div>
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -398,6 +521,13 @@ export default function Dashboard() {
             <p className="text-gray-400 text-sm">Sin datos de proveedores aún</p>
           ) : (
             <>
+              <div className="mb-4">
+                <input
+                  placeholder="Buscar proveedor..."
+                  value={buscaProveedor}
+                  onChange={(e) => setBuscaProveedor(e.target.value)}
+                />
+              </div>
               <div className="table-wrap">
                 <table>
                   <thead>

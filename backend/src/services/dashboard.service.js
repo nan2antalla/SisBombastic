@@ -344,6 +344,67 @@ export async function stockCritico() {
   `);
 }
 
+export async function analiticaClientes() {
+  const rows = await getAll(`
+    SELECT
+      COALESCE(v.cliente_id, 0) AS cliente_id,
+      COALESCE(NULLIF(TRIM(v.cliente_nombre), ''), 'Cliente sin nombre') AS cliente_nombre,
+      COUNT(DISTINCT v.id) AS num_compras,
+      COALESCE(SUM(v.total_venta), 0) AS total_comprado,
+      COALESCE(SUM(v.total_costo), 0) AS total_costo,
+      COALESCE(SUM(v.utilidad_bruta), 0) AS utilidad_total,
+      CASE
+        WHEN COALESCE(SUM(v.total_venta), 0) > 0
+        THEN (COALESCE(SUM(v.utilidad_bruta), 0) / COALESCE(SUM(v.total_venta), 0)) * 100
+        ELSE 0
+      END AS margen_promedio,
+      COALESCE(AVG(v.total_venta), 0) AS ticket_promedio,
+      MIN(v.fecha) AS primera_compra,
+      MAX(v.fecha) AS ultima_compra
+    FROM ventas v
+    WHERE v.estado != 'cancelado'
+    GROUP BY COALESCE(v.cliente_id, 0), COALESCE(NULLIF(TRIM(v.cliente_nombre), ''), 'Cliente sin nombre')
+    ORDER BY total_comprado DESC
+  `);
+
+  const normalizados = rows.map((r) => ({
+    ...r,
+    cliente_id: n(r.cliente_id),
+    num_compras: n(r.num_compras),
+    total_comprado: n(r.total_comprado),
+    total_costo: n(r.total_costo),
+    utilidad_total: n(r.utilidad_total),
+    margen_promedio: n(r.margen_promedio),
+    ticket_promedio: n(r.ticket_promedio),
+  }));
+
+  const topCompran = [...normalizados].sort((a, b) => b.total_comprado - a.total_comprado).slice(0, 12);
+  const topUtilidad = [...normalizados].sort((a, b) => b.utilidad_total - a.utilidad_total).slice(0, 12);
+  const mejorMargen = [...normalizados]
+    .filter((c) => c.num_compras >= 2 && c.total_comprado > 0)
+    .sort((a, b) => b.margen_promedio - a.margen_promedio)
+    .slice(0, 12);
+
+  const activos = normalizados.length;
+  const compradoresRecurrentes = normalizados.filter((c) => c.num_compras >= 2).length;
+  const totalVentasClientes = normalizados.reduce((acc, c) => acc + c.total_comprado, 0);
+  const totalUtilidadClientes = normalizados.reduce((acc, c) => acc + c.utilidad_total, 0);
+  const numComprasTotal = normalizados.reduce((acc, c) => acc + c.num_compras, 0);
+
+  return {
+    clientes_top_compras: topCompran,
+    clientes_top_utilidad: topUtilidad,
+    clientes_mejor_margen: mejorMargen,
+    resumen: {
+      activos,
+      compradores_recurrentes: compradoresRecurrentes,
+      recurrencia_pct: activos > 0 ? (compradoresRecurrentes / activos) * 100 : 0,
+      ticket_promedio: numComprasTotal > 0 ? totalVentasClientes / numComprasTotal : 0,
+      margen_global: totalVentasClientes > 0 ? (totalUtilidadClientes / totalVentasClientes) * 100 : 0,
+    },
+  };
+}
+
 export async function obtenerDashboardDecisiones() {
   const fechaHoy = hoy();
   const desdeMes = inicioMes();
@@ -366,6 +427,7 @@ export async function obtenerDashboardDecisiones() {
     ventasPorDia,
     gastosPorCat,
     efectivo,
+    clientesAnalitica,
   ] = await Promise.all([
     ventasService.ventasDelPeriodo(fechaHoy, fechaHoy),
     ventasService.ventasDelPeriodo(desdeMes, hastaMes),
@@ -383,6 +445,7 @@ export async function obtenerDashboardDecisiones() {
     ventasService.ventasPorDia(haceDias(29), fechaHoy),
     gastosService.gastosPorCategoria(desdeMes, hastaMes),
     cajaService.resumenEfectivo(),
+    analiticaClientes(),
   ]);
 
   const utilidadNetaMes = n(ventasMes?.utilidad_bruta) - n(gastosMes?.total);
@@ -424,6 +487,7 @@ export async function obtenerDashboardDecisiones() {
     productos_mejores: rentables.mejores,
     productos_peores: rentables.peores,
     stock_critico: stockCriticoRows,
+    clientes: clientesAnalitica,
     lives_rentables: [],
     graficos: {
       ventas_por_dia: ventasPorDia.map((r) => ({

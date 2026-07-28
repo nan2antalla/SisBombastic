@@ -34,8 +34,14 @@ export default function Ventas() {
     items: [{ ...emptyItem }],
   });
   const [error, setError] = useState('');
+  const [filtros, setFiltros] = useState({
+    estado: '',
+    desde: '',
+    hasta: '',
+    busqueda: '',
+  });
 
-  const load = () => api.ventas.list().then(setVentas).catch(console.error);
+  const load = (params = {}) => api.ventas.list(params).then(setVentas).catch(console.error);
   const loadClientes = () => api.clientes.list().then(setClientes).catch(console.error);
 
   useEffect(() => {
@@ -256,8 +262,32 @@ export default function Ventas() {
     }
   };
 
-  const pager = usePagination(ventas, 10);
+  const ventasFiltradas = ventas.filter((v) => {
+    const q = filtros.busqueda.trim().toLowerCase();
+    if (!q) return true;
+    const productos = (v.items || []).map((i) => i.producto_nombre).join(' ').toLowerCase();
+    return (
+      String(v.cliente_nombre || '').toLowerCase().includes(q) ||
+      String(v.metodo_pago || '').toLowerCase().includes(q) ||
+      String(v.canal || '').toLowerCase().includes(q) ||
+      productos.includes(q)
+    );
+  });
+  const pager = usePagination(ventasFiltradas, 10);
   const ventaCancelada = detalle?.estado === 'cancelado';
+
+  const aplicarFiltros = () => {
+    const params = {};
+    if (filtros.estado) params.estado = filtros.estado;
+    if (filtros.desde) params.desde = filtros.desde;
+    if (filtros.hasta) params.hasta = filtros.hasta;
+    load(params);
+  };
+
+  const limpiarFiltros = () => {
+    setFiltros({ estado: '', desde: '', hasta: '', busqueda: '' });
+    load();
+  };
 
   return (
     <div>
@@ -275,6 +305,23 @@ export default function Ventas() {
       />
 
       <div className="card">
+        <div className="grid md:grid-cols-5 gap-2 mb-4">
+          <input
+            placeholder="Buscar cliente, producto, canal o pago..."
+            value={filtros.busqueda}
+            onChange={(e) => setFiltros({ ...filtros, busqueda: e.target.value })}
+          />
+          <select value={filtros.estado} onChange={(e) => setFiltros({ ...filtros, estado: e.target.value })}>
+            <option value="">Todos los estados</option>
+            {ESTADOS_VENTA.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+          </select>
+          <input type="date" value={filtros.desde} onChange={(e) => setFiltros({ ...filtros, desde: e.target.value })} />
+          <input type="date" value={filtros.hasta} onChange={(e) => setFiltros({ ...filtros, hasta: e.target.value })} />
+          <div className="flex gap-2">
+            <button type="button" className="btn-primary w-full" onClick={aplicarFiltros}>Filtrar</button>
+            <button type="button" className="btn-secondary w-full" onClick={limpiarFiltros}>Limpiar</button>
+          </div>
+        </div>
         <div className="table-wrap">
           <table>
           <thead>
@@ -308,7 +355,7 @@ export default function Ventas() {
                 </td>
               </tr>
             ))}
-            {ventas.length === 0 && (
+            {ventasFiltradas.length === 0 && (
               <tr><td colSpan={10} className="text-center text-gray-400 py-8">No hay ventas registradas</td></tr>
             )}
           </tbody>

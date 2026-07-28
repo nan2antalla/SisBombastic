@@ -20,8 +20,14 @@ export default function Gastos() {
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState('');
+  const [filtros, setFiltros] = useState({
+    categoria: '',
+    desde: '',
+    hasta: '',
+    busqueda: '',
+  });
 
-  const load = () => api.gastos.list().then(setGastos).catch(console.error);
+  const load = (params = {}) => api.gastos.list(params).then(setGastos).catch(console.error);
   useEffect(() => { load(); }, []);
 
   const handleSubmit = async (e) => {
@@ -37,8 +43,30 @@ export default function Gastos() {
     }
   };
 
-  const total = gastos.reduce((s, g) => s + g.monto, 0);
-  const pager = usePagination(gastos, 10);
+  const gastosFiltrados = gastos.filter((g) => {
+    const q = filtros.busqueda.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      String(g.descripcion || '').toLowerCase().includes(q) ||
+      String(g.metodo_pago || '').toLowerCase().includes(q) ||
+      String(g.relacion_tipo || '').toLowerCase().includes(q)
+    );
+  });
+  const total = gastosFiltrados.reduce((s, g) => s + g.monto, 0);
+  const pager = usePagination(gastosFiltrados, 10);
+
+  const aplicarFiltros = () => {
+    const params = {};
+    if (filtros.categoria) params.categoria = filtros.categoria;
+    if (filtros.desde) params.desde = filtros.desde;
+    if (filtros.hasta) params.hasta = filtros.hasta;
+    load(params);
+  };
+
+  const limpiarFiltros = () => {
+    setFiltros({ categoria: '', desde: '', hasta: '', busqueda: '' });
+    load();
+  };
 
   return (
     <div>
@@ -54,6 +82,23 @@ export default function Gastos() {
       </div>
 
       <div className="card">
+        <div className="grid md:grid-cols-5 gap-2 mb-4">
+          <input
+            placeholder="Buscar descripcion, pago o relacion..."
+            value={filtros.busqueda}
+            onChange={(e) => setFiltros({ ...filtros, busqueda: e.target.value })}
+          />
+          <select value={filtros.categoria} onChange={(e) => setFiltros({ ...filtros, categoria: e.target.value })}>
+            <option value="">Todas las categorias</option>
+            {CATEGORIAS_GASTO.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+          <input type="date" value={filtros.desde} onChange={(e) => setFiltros({ ...filtros, desde: e.target.value })} />
+          <input type="date" value={filtros.hasta} onChange={(e) => setFiltros({ ...filtros, hasta: e.target.value })} />
+          <div className="flex gap-2">
+            <button type="button" className="btn-primary w-full" onClick={aplicarFiltros}>Filtrar</button>
+            <button type="button" className="btn-secondary w-full" onClick={limpiarFiltros}>Limpiar</button>
+          </div>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -77,7 +122,7 @@ export default function Gastos() {
                   <td>{g.relacion_tipo}</td>
                 </tr>
               ))}
-              {gastos.length === 0 && (
+              {gastosFiltrados.length === 0 && (
                 <tr><td colSpan={6} className="text-center text-gray-400 py-8">No hay gastos registrados</td></tr>
               )}
             </tbody>
