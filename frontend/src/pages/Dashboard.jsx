@@ -84,6 +84,18 @@ export default function Dashboard() {
   const clientesMejorMargen = (data?.clientes?.clientes_mejor_margen || []).filter((c) =>
     String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
   );
+  const clientesPeoresUtilidad = (data?.clientes?.clientes_peores_utilidad || []).filter((c) =>
+    String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
+  );
+  const clientesPeoresMargen = (data?.clientes?.clientes_peores_margen || []).filter((c) =>
+    String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
+  );
+  const clientesCompranBarato = (data?.clientes?.clientes_compran_barato || []).filter((c) =>
+    String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
+  );
+  const clientesTopUnidades = (data?.clientes?.clientes_top_unidades || []).filter((c) =>
+    String(c.cliente_nombre || '').toLowerCase().includes(buscaCliente.toLowerCase())
+  );
 
   if (loading) return <p className="text-gray-500">Cargando métricas de decisión...</p>;
   if (error) return <p className="text-red-500">{error}</p>;
@@ -356,25 +368,43 @@ export default function Dashboard() {
 
       {tab === 'clientes' && (
         <div className="space-y-6">
-          <div className="grid md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <div className="card">
               <p className="stat-label">Clientes activos</p>
               <p className="text-2xl font-bold">{data.clientes?.resumen?.activos ?? 0}</p>
             </div>
             <div className="card">
-              <p className="stat-label">Clientes recurrentes</p>
+              <p className="stat-label">Recurrentes</p>
               <p className="text-2xl font-bold text-[#ffcc00]">{data.clientes?.resumen?.compradores_recurrentes ?? 0}</p>
             </div>
             <div className="card">
-              <p className="stat-label">Recurrencia</p>
-              <p className="text-2xl font-bold">
-                <Money value={data.clientes?.resumen?.recurrencia_pct ?? 0} percent signed />
+              <p className="stat-label">Con pérdida</p>
+              <p className="text-2xl font-bold text-red-400">{data.clientes?.resumen?.con_perdida ?? 0}</p>
+            </div>
+            <div className="card">
+              <p className="stat-label">Unidades vendidas</p>
+              <p className="text-2xl font-bold">{data.clientes?.resumen?.unidades_totales ?? 0}</p>
+            </div>
+            <div className="card">
+              <p className="stat-label">Más se lleva</p>
+              <p className="text-sm font-semibold mt-1 truncate">
+                {data.clientes?.resumen?.cliente_mas_unidades?.nombre || '—'}
+              </p>
+              <p className="text-xs text-gray-400">
+                {data.clientes?.resumen?.cliente_mas_unidades
+                  ? `${data.clientes.resumen.cliente_mas_unidades.unidades} und.`
+                  : ''}
               </p>
             </div>
             <div className="card">
-              <p className="stat-label">Margen global clientes</p>
-              <p className="text-2xl font-bold">
-                <Money value={data.clientes?.resumen?.margen_global ?? 0} percent signed />
+              <p className="stat-label">Peor utilidad</p>
+              <p className="text-sm font-semibold mt-1 truncate">
+                {data.clientes?.resumen?.cliente_peor?.nombre || '—'}
+              </p>
+              <p className="text-xs">
+                {data.clientes?.resumen?.cliente_peor
+                  ? <Money value={data.clientes.resumen.cliente_peor.utilidad} signed />
+                  : null}
               </p>
             </div>
           </div>
@@ -391,12 +421,12 @@ export default function Dashboard() {
             <Section title="Top clientes por compra" subtitle="Los que más dinero compran">
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Cliente</th><th>Compras</th><th>Total</th><th>Ticket</th></tr></thead>
+                  <thead><tr><th>Cliente</th><th>Und.</th><th>Total</th><th>Ticket</th></tr></thead>
                   <tbody>
                     {clientesTopCompras.map((c, i) => (
-                      <tr key={`${c.cliente_id}-${i}`}>
+                      <tr key={`tc-${c.cliente_id}-${i}`}>
                         <td>{c.cliente_nombre}</td>
-                        <td>{c.num_compras}</td>
+                        <td>{c.unidades}</td>
                         <td>{formatMoney(c.total_comprado)}</td>
                         <td>{formatMoney(c.ticket_promedio)}</td>
                       </tr>
@@ -406,16 +436,16 @@ export default function Dashboard() {
               </div>
             </Section>
 
-            <Section title="Top clientes por utilidad" subtitle="Los que más ganancia dejan">
+            <Section title="Top por utilidad" subtitle="Los que más ganancia dejan">
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Cliente</th><th>Utilidad</th><th>Total</th><th>Margen</th></tr></thead>
+                  <thead><tr><th>Cliente</th><th>Utilidad</th><th>Und.</th><th>Margen</th></tr></thead>
                   <tbody>
                     {clientesTopUtilidad.map((c, i) => (
-                      <tr key={`${c.cliente_id}-${i}`}>
+                      <tr key={`tu-${c.cliente_id}-${i}`}>
                         <td>{c.cliente_nombre}</td>
                         <td><Money value={c.utilidad_total} signed /></td>
-                        <td>{formatMoney(c.total_comprado)}</td>
+                        <td>{c.unidades}</td>
                         <td><Money value={c.margen_promedio} percent signed /></td>
                       </tr>
                     ))}
@@ -424,16 +454,76 @@ export default function Dashboard() {
               </div>
             </Section>
 
-            <Section title="Mejor margen por cliente" subtitle="Solo clientes con 2+ compras">
+            <Section title="Quién más se lleva" subtitle="Clientes con más unidades compradas">
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Cliente</th><th>Compras</th><th>Margen</th><th>Utilidad</th></tr></thead>
+                  <thead><tr><th>Cliente</th><th>Und.</th><th>Und/compra</th><th>Total</th></tr></thead>
                   <tbody>
-                    {clientesMejorMargen.map((c, i) => (
-                      <tr key={`${c.cliente_id}-${i}`}>
+                    {clientesTopUnidades.map((c, i) => (
+                      <tr key={`un-${c.cliente_id}-${i}`}>
                         <td>{c.cliente_nombre}</td>
-                        <td>{c.num_compras}</td>
+                        <td className="font-semibold text-[#ffcc00]">{c.unidades}</td>
+                        <td>{Number(c.unidades_por_compra || 0).toFixed(1)}</td>
+                        <td>{formatMoney(c.total_comprado)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6">
+            <Section title="Peores por utilidad" subtitle="Pérdidas o menor ganancia total">
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Cliente</th><th>Utilidad</th><th>Und.</th><th>Alerta</th></tr></thead>
+                  <tbody>
+                    {clientesPeoresUtilidad.map((c, i) => (
+                      <tr key={`pu-${c.cliente_id}-${i}`}>
+                        <td>{c.cliente_nombre}</td>
+                        <td><Money value={c.utilidad_total} signed /></td>
+                        <td>{c.unidades}</td>
+                        <td>
+                          {c.alerta
+                            ? <span className="badge bg-red-500/15 text-red-300">{c.alerta}</span>
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            <Section title="Peores por margen" subtitle="Pagan poco vs. el costo">
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Cliente</th><th>Margen</th><th>Utilidad</th><th>Total</th></tr></thead>
+                  <tbody>
+                    {clientesPeoresMargen.map((c, i) => (
+                      <tr key={`pm-${c.cliente_id}-${i}`}>
+                        <td>{c.cliente_nombre}</td>
                         <td><Money value={c.margen_promedio} percent signed /></td>
+                        <td><Money value={c.utilidad_total} signed /></td>
+                        <td>{formatMoney(c.total_comprado)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            <Section title="Compran más barato" subtitle="Menor precio promedio por unidad">
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Cliente</th><th>Bs/und</th><th>Und.</th><th>Utilidad</th></tr></thead>
+                  <tbody>
+                    {clientesCompranBarato.map((c, i) => (
+                      <tr key={`cb-${c.cliente_id}-${i}`}>
+                        <td>{c.cliente_nombre}</td>
+                        <td>{formatMoney(c.precio_promedio_unidad)}</td>
+                        <td>{c.unidades}</td>
                         <td><Money value={c.utilidad_total} signed /></td>
                       </tr>
                     ))}
@@ -442,6 +532,35 @@ export default function Dashboard() {
               </div>
             </Section>
           </div>
+
+          <Section title="Mejor margen por cliente" subtitle="Solo clientes con 2+ compras">
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Compras</th>
+                    <th>Und.</th>
+                    <th>Margen</th>
+                    <th>Utilidad</th>
+                    <th>Bs/und</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientesMejorMargen.map((c, i) => (
+                    <tr key={`mm-${c.cliente_id}-${i}`}>
+                      <td>{c.cliente_nombre}</td>
+                      <td>{c.num_compras}</td>
+                      <td>{c.unidades}</td>
+                      <td><Money value={c.margen_promedio} percent signed /></td>
+                      <td><Money value={c.utilidad_total} signed /></td>
+                      <td>{formatMoney(c.precio_promedio_unidad)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
         </div>
       )}
 

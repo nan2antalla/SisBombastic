@@ -346,37 +346,94 @@ export async function stockCritico() {
 
 export async function analiticaClientes() {
   const rows = await getAll(`
+    WITH base AS (
+      SELECT
+        COALESCE(v.cliente_id, 0) AS cliente_id,
+        COALESCE(NULLIF(TRIM(v.cliente_nombre), ''), 'Cliente sin nombre') AS cliente_nombre,
+        COUNT(DISTINCT v.id) AS num_compras,
+        COALESCE(SUM(v.total_venta), 0) AS total_comprado,
+        COALESCE(SUM(v.total_costo), 0) AS total_costo,
+        COALESCE(SUM(v.utilidad_bruta), 0) AS utilidad_total,
+        COALESCE(AVG(v.total_venta), 0) AS ticket_promedio,
+        MIN(v.fecha) AS primera_compra,
+        MAX(v.fecha) AS ultima_compra
+      FROM ventas v
+      WHERE v.estado != 'cancelado'
+      GROUP BY 1, 2
+    ),
+    items AS (
+      SELECT
+        COALESCE(v.cliente_id, 0) AS cliente_id,
+        COALESCE(NULLIF(TRIM(v.cliente_nombre), ''), 'Cliente sin nombre') AS cliente_nombre,
+        COALESCE(SUM(vi.cantidad), 0) AS unidades,
+        COALESCE(SUM(vi.precio_venta * vi.cantidad), 0) AS ingresos_productos,
+        COALESCE(SUM(vi.utilidad), 0) AS utilidad_items,
+        COUNT(vi.id) AS lineas
+      FROM ventas v
+      JOIN venta_items vi ON vi.venta_id = v.id
+      WHERE v.estado != 'cancelado'
+      GROUP BY 1, 2
+    )
     SELECT
-      COALESCE(v.cliente_id, 0) AS cliente_id,
-      COALESCE(NULLIF(TRIM(v.cliente_nombre), ''), 'Cliente sin nombre') AS cliente_nombre,
-      COUNT(DISTINCT v.id) AS num_compras,
-      COALESCE(SUM(v.total_venta), 0) AS total_comprado,
-      COALESCE(SUM(v.total_costo), 0) AS total_costo,
-      COALESCE(SUM(v.utilidad_bruta), 0) AS utilidad_total,
+      b.cliente_id,
+      b.cliente_nombre,
+      b.num_compras,
+      b.total_comprado,
+      b.total_costo,
+      b.utilidad_total,
+      b.ticket_promedio,
+      b.primera_compra,
+      b.ultima_compra,
+      COALESCE(i.unidades, 0) AS unidades,
+      COALESCE(i.lineas, 0) AS lineas,
       CASE
-        WHEN COALESCE(SUM(v.total_venta), 0) > 0
-        THEN (COALESCE(SUM(v.utilidad_bruta), 0) / COALESCE(SUM(v.total_venta), 0)) * 100
+        WHEN b.total_comprado > 0 THEN (b.utilidad_total / b.total_comprado) * 100
         ELSE 0
       END AS margen_promedio,
-      COALESCE(AVG(v.total_venta), 0) AS ticket_promedio,
-      MIN(v.fecha) AS primera_compra,
-      MAX(v.fecha) AS ultima_compra
-    FROM ventas v
-    WHERE v.estado != 'cancelado'
-    GROUP BY COALESCE(v.cliente_id, 0), COALESCE(NULLIF(TRIM(v.cliente_nombre), ''), 'Cliente sin nombre')
-    ORDER BY total_comprado DESC
+      CASE
+        WHEN COALESCE(i.unidades, 0) > 0 THEN COALESCE(i.ingresos_productos, 0) / i.unidades
+        ELSE 0
+      END AS precio_promedio_unidad,
+      CASE
+        WHEN b.num_compras > 0 THEN COALESCE(i.unidades, 0) / b.num_compras
+        ELSE 0
+      END AS unidades_por_compra
+    FROM base b
+    LEFT JOIN items i
+      ON i.cliente_id = b.cliente_id AND i.cliente_nombre = b.cliente_nombre
+    ORDER BY b.total_comprado DESC
   `);
 
-  const normalizados = rows.map((r) => ({
-    ...r,
-    cliente_id: n(r.cliente_id),
-    num_compras: n(r.num_compras),
-    total_comprado: n(r.total_comprado),
-    total_costo: n(r.total_costo),
-    utilidad_total: n(r.utilidad_total),
-    margen_promedio: n(r.margen_promedio),
-    ticket_promedio: n(r.ticket_promedio),
-  }));
+  const normalizados = rows.map((r) => {
+    const utilidad = n(r.utilidad_total);
+    const total = n(r.total_comprado);
+    const margen = n(r.margen_promedio);
+    const unidades = n(r.unidades);
+    const precioUnit = n(r.precio_promedio_unidad);
+    return {
+      ...r,
+      cliente_id: n(r.cliente_id),
+      num_compras: n(r.num_compras),
+      total_comprado: total,
+      total_costo: n(r.total_costo),
+      utilidad_total: utilidad,
+      margen_promedio: margen,
+      ticket_promedio: n(r.ticket_promedio),
+      unidades,
+      lineas: n(r.lineas),
+      precio_promedio_unidad: precioUnit,
+      unidades_por_compra: n(r.unidades_por_compra),
+      es_perdida: utilidad < 0,
+      alerta:
+        utilidad < 0
+          ? 'Genera pérdida'
+          : margen < 10 && total > 0
+            ? 'Margen muy bajo'
+            : precioUnit > 0 && precioUnit < 25 && unidades >= 3
+              ? 'Compra barato'
+              : null,
+    };
+  });
 
   const topCompran = [...normalizados].sort((a, b) => b.total_comprado - a.total_comprado).slice(0, 12);
   const topUtilidad = [...normalizados].sort((a, b) => b.utilidad_total - a.utilidad_total).slice(0, 12);
@@ -385,22 +442,60 @@ export async function analiticaClientes() {
     .sort((a, b) => b.margen_promedio - a.margen_promedio)
     .slice(0, 12);
 
+  const peoresUtilidad = [...normalizados]
+    .sort((a, b) => a.utilidad_total - b.utilidad_total)
+    .slice(0, 12);
+
+  const peoresMargen = [...normalizados]
+    .filter((c) => c.num_compras >= 1 && c.total_comprado > 0)
+    .sort((a, b) => a.margen_promedio - b.margen_promedio)
+    .slice(0, 12);
+
+  const compranBarato = [...normalizados]
+    .filter((c) => c.unidades >= 2)
+    .sort((a, b) => a.precio_promedio_unidad - b.precio_promedio_unidad)
+    .slice(0, 12);
+
+  const topUnidades = [...normalizados]
+    .sort((a, b) => b.unidades - a.unidades)
+    .slice(0, 12);
+
   const activos = normalizados.length;
   const compradoresRecurrentes = normalizados.filter((c) => c.num_compras >= 2).length;
+  const conPerdida = normalizados.filter((c) => c.utilidad_total < 0).length;
   const totalVentasClientes = normalizados.reduce((acc, c) => acc + c.total_comprado, 0);
   const totalUtilidadClientes = normalizados.reduce((acc, c) => acc + c.utilidad_total, 0);
   const numComprasTotal = normalizados.reduce((acc, c) => acc + c.num_compras, 0);
+  const totalUnidades = normalizados.reduce((acc, c) => acc + c.unidades, 0);
+  const clienteMasUnidades = topUnidades[0] || null;
+  const clientePeorUtilidad = peoresUtilidad[0] || null;
 
   return {
     clientes_top_compras: topCompran,
     clientes_top_utilidad: topUtilidad,
     clientes_mejor_margen: mejorMargen,
+    clientes_peores_utilidad: peoresUtilidad,
+    clientes_peores_margen: peoresMargen,
+    clientes_compran_barato: compranBarato,
+    clientes_top_unidades: topUnidades,
     resumen: {
       activos,
       compradores_recurrentes: compradoresRecurrentes,
+      con_perdida: conPerdida,
       recurrencia_pct: activos > 0 ? (compradoresRecurrentes / activos) * 100 : 0,
       ticket_promedio: numComprasTotal > 0 ? totalVentasClientes / numComprasTotal : 0,
       margen_global: totalVentasClientes > 0 ? (totalUtilidadClientes / totalVentasClientes) * 100 : 0,
+      unidades_totales: totalUnidades,
+      unidades_promedio_cliente: activos > 0 ? totalUnidades / activos : 0,
+      cliente_mas_unidades: clienteMasUnidades
+        ? { nombre: clienteMasUnidades.cliente_nombre, unidades: clienteMasUnidades.unidades }
+        : null,
+      cliente_peor: clientePeorUtilidad
+        ? {
+            nombre: clientePeorUtilidad.cliente_nombre,
+            utilidad: clientePeorUtilidad.utilidad_total,
+          }
+        : null,
     },
   };
 }
