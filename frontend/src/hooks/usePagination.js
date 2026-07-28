@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 
+/**
+ * Paginación estable: no reinicia la página solo porque el array
+ * cambió de referencia (p. ej. .filter() en cada render).
+ */
 export function usePagination(items, initialPageSize = 10) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(initialPageSize);
@@ -7,9 +11,13 @@ export function usePagination(items, initialPageSize = 10) {
   const total = list.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
 
+  const firstId = list[0]?.id ?? list[0]?.cliente_id ?? '';
+  const lastId = list[total - 1]?.id ?? list[total - 1]?.cliente_id ?? '';
+  const listSignature = `${total}:${firstId}:${lastId}`;
+
   useEffect(() => {
     setPage(1);
-  }, [items, pageSize]);
+  }, [listSignature, pageSize]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
