@@ -61,6 +61,9 @@ export async function initDb() {
   // Migraciones ligeras (tablas ya existentes)
   const migraciones = [
     `ALTER TABLE compras ADD COLUMN IF NOT EXISTS pagado_desde_caja BOOLEAN DEFAULT TRUE`,
+    `ALTER TABLE lives ADD COLUMN IF NOT EXISTS titulo TEXT`,
+    `ALTER TABLE lives ADD COLUMN IF NOT EXISTS plataforma TEXT DEFAULT 'tiktok'`,
+    `ALTER TABLE lives ADD COLUMN IF NOT EXISTS estado TEXT DEFAULT 'finalizado'`,
   ];
   for (const sql of migraciones) {
     try { await pool.query(sql); } catch { /* ya aplicada o no aplica */ }

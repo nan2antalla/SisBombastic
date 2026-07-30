@@ -72,6 +72,16 @@ export const api = {
     create: (data) => request('/clientes', { method: 'POST', body: JSON.stringify(data) }),
   },
 
+  lives: {
+    list: (params = {}) => request(`/lives?${new URLSearchParams(params)}`),
+    resumen: () => request('/lives/resumen'),
+    get: (id) => request(`/lives/${id}`),
+    create: (data) => request('/lives', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/lives/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    sincronizar: (id) => request(`/lives/${id}/sincronizar`, { method: 'POST' }),
+    delete: (id) => request(`/lives/${id}`, { method: 'DELETE' }),
+  },
+
   compras: {
     list: (params = {}) => request(`/compras?${new URLSearchParams(params)}`),
     get: (id) => request(`/compras/${id}`),

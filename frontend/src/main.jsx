@@ -11,6 +11,7 @@ import Inventario from './pages/Inventario';
 import Ventas from './pages/Ventas';
 import Gastos from './pages/Gastos';
 import Caja from './pages/Caja';
+import Lives from './pages/Lives';
 import './index.css';
 
 createRoot(document.getElementById('root')).render(
@@ -25,6 +26,7 @@ createRoot(document.getElementById('root')).render(
               <Route path="/compras" element={<Compras />} />
               <Route path="/inventario" element={<Inventario />} />
               <Route path="/ventas" element={<Ventas />} />
+              <Route path="/lives" element={<Lives />} />
               <Route path="/gastos" element={<Gastos />} />
               <Route path="/caja" element={<Caja />} />
             </Route>

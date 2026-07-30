@@ -54,6 +54,13 @@ export const ESTADOS_VENTA = [
   { value: 'cancelado', label: 'Cancelado', color: 'bg-red-500/15 text-red-300' },
 ];
 
+export const ESTADOS_LIVE = [
+  { value: 'programado', label: 'Programado', color: 'bg-[#ffcc00]/20 text-[#ffcc00]' },
+  { value: 'en_vivo', label: 'En vivo', color: 'bg-emerald-500/15 text-emerald-300' },
+  { value: 'finalizado', label: 'Finalizado', color: 'bg-sky-500/15 text-sky-300' },
+  { value: 'cancelado', label: 'Cancelado', color: 'bg-red-500/15 text-red-300' },
+];
+
 export const CATEGORIAS_GASTO = [
   { value: 'transporte', label: 'Transporte' },
   { value: 'publicidad', label: 'Publicidad' },

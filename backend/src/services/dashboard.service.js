@@ -3,6 +3,7 @@ import * as ventasService from './ventas.service.js';
 import * as gastosService from './gastos.service.js';
 import * as inventarioService from './inventario.service.js';
 import * as cajaService from './caja.service.js';
+import * as livesService from './lives.service.js';
 import { hoy, inicioMes, finMes, calcularMargen, haceDias } from '../utils/calculos.js';
 
 function n(v) {
@@ -344,6 +345,173 @@ export async function stockCritico() {
   `);
 }
 
+export async function roiYPredicciones() {
+  const fechaHoy = hoy();
+  const desdeMes = inicioMes();
+  const hastaMes = finMes();
+  const diaHoy = Number(fechaHoy.slice(8, 10));
+  const diasMes = Number(hastaMes.slice(8, 10));
+  const diasRestantes = Math.max(0, diasMes - diaHoy);
+  const diasTranscurridos = Math.max(1, diaHoy);
+
+  const [
+    ventasMes,
+    gastosMes,
+    comprasMes,
+    reinversionesMes,
+    valorInventario,
+    porMes,
+    ventas30,
+    autosMes,
+  ] = await Promise.all([
+    getOne(`
+      SELECT
+        COALESCE(SUM(total_venta),0) AS total,
+        COALESCE(SUM(utilidad_bruta),0) AS utilidad_bruta,
+        COALESCE(SUM(total_costo),0) AS total_costo,
+        COUNT(*) AS cantidad
+      FROM ventas WHERE estado != 'cancelado' AND fecha >= $1 AND fecha <= $2
+    `, [desdeMes, hastaMes]),
+    getOne(`
+      SELECT COALESCE(SUM(monto),0) AS total FROM gastos
+      WHERE fecha >= $1 AND fecha <= $2
+    `, [desdeMes, hastaMes]),
+    getOne(`
+      SELECT COALESCE(SUM(costo_total),0) AS total FROM compras
+      WHERE fecha >= $1 AND fecha <= $2
+    `, [desdeMes, hastaMes]),
+    getOne(`
+      SELECT COALESCE(SUM(monto),0) AS total FROM caja_movimientos
+      WHERE tipo = 'salida_compra' AND fecha >= $1 AND fecha <= $2
+    `, [desdeMes, hastaMes]),
+    inventarioService.valorTotalInventario(),
+    getAll(`
+      SELECT
+        TO_CHAR(fecha, 'YYYY-MM') AS periodo,
+        COALESCE(SUM(total_venta),0) AS ventas,
+        COALESCE(SUM(utilidad_bruta),0) AS utilidad_bruta,
+        COALESCE(SUM(total_costo),0) AS costo
+      FROM ventas
+      WHERE estado != 'cancelado' AND fecha >= (CURRENT_DATE - INTERVAL '6 months')
+      GROUP BY 1
+      ORDER BY 1
+    `),
+    getAll(`
+      SELECT fecha::text AS fecha,
+             COALESCE(SUM(total_venta),0) AS ventas,
+             COALESCE(SUM(utilidad_bruta),0) AS utilidad,
+             COUNT(*) AS cantidad
+      FROM ventas
+      WHERE estado != 'cancelado' AND fecha >= $1 AND fecha <= $2
+      GROUP BY fecha
+      ORDER BY fecha
+    `, [haceDias(29), fechaHoy]),
+    ventasService.autosVendidos(desdeMes, hastaMes),
+  ]);
+
+  const gastosPorMes = await getAll(`
+    SELECT TO_CHAR(fecha, 'YYYY-MM') AS periodo, COALESCE(SUM(monto),0) AS gastos
+    FROM gastos
+    WHERE fecha >= (CURRENT_DATE - INTERVAL '6 months')
+    GROUP BY 1
+  `);
+  const comprasPorMes = await getAll(`
+    SELECT TO_CHAR(fecha, 'YYYY-MM') AS periodo, COALESCE(SUM(costo_total),0) AS comprado
+    FROM compras
+    WHERE fecha >= (CURRENT_DATE - INTERVAL '6 months')
+    GROUP BY 1
+  `);
+  const gastosMap = Object.fromEntries(gastosPorMes.map((r) => [r.periodo, n(r.gastos)]));
+  const comprasMap = Object.fromEntries(comprasPorMes.map((r) => [r.periodo, n(r.comprado)]));
+
+  const utilidadNetaMes = n(ventasMes?.utilidad_bruta) - n(gastosMes?.total);
+  const capitalInvertidoMes = Math.max(n(comprasMes?.total), n(reinversionesMes?.total), 0);
+  const capitalTrabajo = capitalInvertidoMes > 0
+    ? capitalInvertidoMes
+    : Math.max(n(valorInventario), n(ventasMes?.total_costo), 1);
+
+  const roiSobreInversion = capitalTrabajo > 0 ? (utilidadNetaMes / capitalTrabajo) * 100 : 0;
+  const roiSobreInventario = n(valorInventario) > 0 ? (utilidadNetaMes / n(valorInventario)) * 100 : 0;
+  const roiSobreVentas = n(ventasMes?.total) > 0 ? (utilidadNetaMes / n(ventasMes?.total)) * 100 : 0;
+
+  const historicoRoi = porMes.map((m) => {
+    const utilidadNeta = n(m.utilidad_bruta) - (gastosMap[m.periodo] || 0);
+    const capital = Math.max(comprasMap[m.periodo] || 0, n(m.costo), 1);
+    return {
+      periodo: m.periodo,
+      ventas: n(m.ventas),
+      utilidad_bruta: n(m.utilidad_bruta),
+      utilidad_neta: utilidadNeta,
+      capital_invertido: comprasMap[m.periodo] || 0,
+      roi: (utilidadNeta / capital) * 100,
+    };
+  });
+
+  const diasVentana = 30;
+  const sumVentas = ventas30.reduce((a, r) => a + n(r.ventas), 0);
+  const sumUtilidad = ventas30.reduce((a, r) => a + n(r.utilidad), 0);
+  const sumTickets = ventas30.reduce((a, r) => a + n(r.cantidad), 0);
+  const promedioDiarioVentas = sumVentas / diasVentana;
+  const promedioDiarioUtilidad = sumUtilidad / diasVentana;
+  const promedioDiarioTickets = sumTickets / diasVentana;
+
+  const recientes = ventas30.slice(-14);
+  const anteriores = ventas30.slice(0, Math.max(0, ventas30.length - 14));
+  const avgRec = recientes.length
+    ? recientes.reduce((a, r) => a + n(r.ventas), 0) / recientes.length
+    : promedioDiarioVentas;
+  const avgAnt = anteriores.length
+    ? anteriores.reduce((a, r) => a + n(r.ventas), 0) / anteriores.length
+    : promedioDiarioVentas;
+  const tendenciaPct = avgAnt > 0 ? ((avgRec - avgAnt) / avgAnt) * 100 : 0;
+  const factorTendencia = 1 + Math.max(-0.35, Math.min(0.35, tendenciaPct / 100));
+
+  const proyeccionMesVentas = n(ventasMes?.total) + promedioDiarioVentas * factorTendencia * diasRestantes;
+  const proyeccionMesUtilidad = utilidadNetaMes + promedioDiarioUtilidad * factorTendencia * diasRestantes;
+  const proyeccionMesAutos = n(autosMes) + (n(autosMes) / diasTranscurridos) * factorTendencia * diasRestantes;
+
+  let interpretacion = 'Estable';
+  if (tendenciaPct >= 15) interpretacion = 'Al alza';
+  else if (tendenciaPct <= -15) interpretacion = 'A la baja';
+
+  return {
+    roi: {
+      mes_actual: {
+        utilidad_neta: utilidadNetaMes,
+        capital_invertido: capitalInvertidoMes,
+        capital_usado: capitalTrabajo,
+        valor_inventario: n(valorInventario),
+        roi_sobre_inversion: roiSobreInversion,
+        roi_sobre_inventario: roiSobreInventario,
+        roi_sobre_ventas: roiSobreVentas,
+        reinversiones: n(reinversionesMes?.total),
+        compras_del_mes: n(comprasMes?.total),
+        formula: 'ROI = Utilidad neta del mes / Capital invertido (compras del mes, o inventario/costo si no hubo compras)',
+      },
+      historico: historicoRoi,
+    },
+    predicciones: {
+      dias_restantes_mes: diasRestantes,
+      dias_transcurridos: diasTranscurridos,
+      tendencia_pct: tendenciaPct,
+      interpretacion,
+      promedio_diario_ventas: promedioDiarioVentas,
+      promedio_diario_utilidad: promedioDiarioUtilidad,
+      proyeccion_cierre_mes: {
+        ventas: proyeccionMesVentas,
+        utilidad_neta: proyeccionMesUtilidad,
+        autos: proyeccionMesAutos,
+      },
+      proximos_7_dias: {
+        ventas: promedioDiarioVentas * factorTendencia * 7,
+        utilidad: promedioDiarioUtilidad * factorTendencia * 7,
+        tickets: promedioDiarioTickets * factorTendencia * 7,
+      },
+      nota: 'Basado en promedio de los últimos 30 días, ajustado por tendencia (últimos 14 vs 14 anteriores).',
+    },
+  };
+}
+
 export async function analiticaClientes() {
   const rows = await getAll(`
     WITH base AS (
@@ -523,6 +691,8 @@ export async function obtenerDashboardDecisiones() {
     gastosPorCat,
     efectivo,
     clientesAnalitica,
+    roiPred,
+    livesResumen,
   ] = await Promise.all([
     ventasService.ventasDelPeriodo(fechaHoy, fechaHoy),
     ventasService.ventasDelPeriodo(desdeMes, hastaMes),
@@ -541,6 +711,8 @@ export async function obtenerDashboardDecisiones() {
     gastosService.gastosPorCategoria(desdeMes, hastaMes),
     cajaService.resumenEfectivo(),
     analiticaClientes(),
+    roiYPredicciones(),
+    livesService.resumenLives(),
   ]);
 
   const utilidadNetaMes = n(ventasMes?.utilidad_bruta) - n(gastosMes?.total);
@@ -570,6 +742,8 @@ export async function obtenerDashboardDecisiones() {
     utilidad_promedio_venta: velocidad.utilidad_promedio,
     dias_promedio_venta: velocidad.dias_promedio,
     utilidad_historica: n(utilidadTotalHist?.u),
+    roi_mensual: roiPred.roi,
+    predicciones: roiPred.predicciones,
 
     // Decisiones
     top_productos: topProductos,
@@ -583,7 +757,8 @@ export async function obtenerDashboardDecisiones() {
     productos_peores: rentables.peores,
     stock_critico: stockCriticoRows,
     clientes: clientesAnalitica,
-    lives_rentables: [],
+    lives_rentables: livesResumen.top || [],
+    lives_resumen: livesResumen.resumen || {},
     graficos: {
       ventas_por_dia: ventasPorDia.map((r) => ({
         fecha: r.fecha,

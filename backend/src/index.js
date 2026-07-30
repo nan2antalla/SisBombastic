@@ -16,6 +16,7 @@ import backupRoutes from './routes/backup.routes.js';
 import resetRoutes from './routes/reset.routes.js';
 import proveedoresRoutes from './routes/proveedores.routes.js';
 import clientesRoutes from './routes/clientes.routes.js';
+import livesRoutes from './routes/lives.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -36,8 +37,8 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     nombre: 'Bombastic Dreamers Online',
-    version: '2026-07-27-editar-ventas',
-    features: { editar_ventas: true },
+    version: '2026-07-30-roi-predicciones-lives',
+    features: { editar_ventas: true, roi_mensual: true, predicciones: true, lives: true },
   });
 });
 
@@ -54,6 +55,7 @@ app.use('/api/backup', backupRoutes);
 app.use('/api/admin', resetRoutes);
 app.use('/api/proveedores', proveedoresRoutes);
 app.use('/api/clientes', clientesRoutes);
+app.use('/api/lives', livesRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Ruta no encontrada: ${req.method} ${req.originalUrl}` });

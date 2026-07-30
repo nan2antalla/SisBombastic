@@ -103,6 +103,8 @@ export default function Dashboard() {
 
   const tabs = [
     { id: 'resumen', label: 'Resumen' },
+    { id: 'roi', label: 'ROI mensual' },
+    { id: 'predicciones', label: 'Predicciones' },
     { id: 'banco', label: 'Dinero / Banco' },
     { id: 'graficos', label: 'Gráficos' },
     { id: 'clientes', label: 'Clientes' },
@@ -110,6 +112,7 @@ export default function Dashboard() {
     { id: 'proveedores', label: 'Proveedores' },
     { id: 'velocidad', label: 'Velocidad de venta' },
     { id: 'productos', label: 'Productos' },
+    { id: 'lives', label: 'Lives' },
   ];
 
   return (
@@ -171,6 +174,17 @@ export default function Dashboard() {
               label="Utilidad histórica"
               value={<Money value={data.utilidad_historica} signed />}
               amount={data.utilidad_historica}
+            />
+            <StatCard
+              label="ROI del mes"
+              value={<Money value={data.roi_mensual?.mes_actual?.roi_sobre_inversion} percent signed />}
+              amount={data.roi_mensual?.mes_actual?.roi_sobre_inversion}
+              hint="Utilidad neta / capital invertido"
+            />
+            <StatCard
+              label="Proyección ventas mes"
+              value={formatMoney(data.predicciones?.proyeccion_cierre_mes?.ventas)}
+              hint={`Tendencia: ${data.predicciones?.interpretacion || '—'}`}
             />
           </div>
 
@@ -239,6 +253,115 @@ export default function Dashboard() {
           </div>
         </>
       )}
+
+      {tab === 'roi' && (() => {
+        const r = data.roi_mensual?.mes_actual || {};
+        const hist = data.roi_mensual?.historico || [];
+        return (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatCard
+                label="ROI sobre inversión"
+                value={<Money value={r.roi_sobre_inversion} percent signed />}
+                amount={r.roi_sobre_inversion}
+                hint="Principal del mes"
+              />
+              <StatCard
+                label="ROI sobre inventario"
+                value={<Money value={r.roi_sobre_inventario} percent signed />}
+                amount={r.roi_sobre_inventario}
+              />
+              <StatCard
+                label="ROI sobre ventas"
+                value={<Money value={r.roi_sobre_ventas} percent signed />}
+                amount={r.roi_sobre_ventas}
+              />
+              <StatCard
+                label="Utilidad neta mes"
+                value={<Money value={r.utilidad_neta} signed />}
+                amount={r.utilidad_neta}
+              />
+            </div>
+            <div className="grid md:grid-cols-3 gap-4">
+              <StatCard label="Compras del mes" value={formatMoney(r.compras_del_mes)} />
+              <StatCard label="Reinversiones (caja)" value={formatMoney(r.reinversiones)} negative />
+              <StatCard label="Capital usado en ROI" value={formatMoney(r.capital_usado)} hint="Base del cálculo" />
+            </div>
+            <Section title="Cómo se calcula" subtitle={r.formula}>
+              <p className="text-sm text-gray-400">
+                Si este mes no hubo compras, se usa el valor del inventario o el costo de lo vendido como base.
+              </p>
+            </Section>
+            <Section title="ROI histórico (últimos meses)" subtitle="Utilidad neta / capital del mes">
+              {hist.length === 0 ? (
+                <p className="text-sm text-gray-400">Sin histórico aún</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Mes</th>
+                        <th>Ventas</th>
+                        <th>Utilidad neta</th>
+                        <th>Capital</th>
+                        <th>ROI</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hist.map((h) => (
+                        <tr key={h.periodo}>
+                          <td>{h.periodo}</td>
+                          <td>{formatMoney(h.ventas)}</td>
+                          <td><Money value={h.utilidad_neta} signed /></td>
+                          <td>{formatMoney(h.capital_invertido)}</td>
+                          <td><Money value={h.roi} percent signed /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Section>
+          </div>
+        );
+      })()}
+
+      {tab === 'predicciones' && (() => {
+        const p = data.predicciones || {};
+        const cierre = p.proyeccion_cierre_mes || {};
+        const prox = p.proximos_7_dias || {};
+        return (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatCard
+                label="Tendencia"
+                value={p.interpretacion || '—'}
+                hint={p.tendencia_pct != null ? `${Number(p.tendencia_pct).toFixed(1)}% vs quincena anterior` : ''}
+              />
+              <StatCard label="Días restantes del mes" value={p.dias_restantes_mes ?? '—'} />
+              <StatCard label="Promedio diario ventas" value={formatMoney(p.promedio_diario_ventas)} />
+              <StatCard label="Promedio diario utilidad" value={<Money value={p.promedio_diario_utilidad} signed />} amount={p.promedio_diario_utilidad} />
+            </div>
+            <div className="grid md:grid-cols-2 gap-6">
+              <Section title="Proyección cierre de mes" subtitle="Lo actual + proyección de días restantes">
+                <div className="grid grid-cols-1 gap-3">
+                  <StatCard label="Ventas proyectadas" value={formatMoney(cierre.ventas)} amount={cierre.ventas} />
+                  <StatCard label="Utilidad neta proyectada" value={<Money value={cierre.utilidad_neta} signed />} amount={cierre.utilidad_neta} />
+                  <StatCard label="Autos proyectados" value={Number(cierre.autos || 0).toFixed(0)} />
+                </div>
+              </Section>
+              <Section title="Próximos 7 días" subtitle="Estimación a ritmo actual">
+                <div className="grid grid-cols-1 gap-3">
+                  <StatCard label="Ventas estimadas" value={formatMoney(prox.ventas)} amount={prox.ventas} />
+                  <StatCard label="Utilidad estimada" value={<Money value={prox.utilidad} signed />} amount={prox.utilidad} />
+                  <StatCard label="Tickets estimados" value={Number(prox.tickets || 0).toFixed(1)} />
+                </div>
+              </Section>
+            </div>
+            <p className="text-xs text-gray-500">{p.nota}</p>
+          </div>
+        );
+      })()}
 
       {tab === 'banco' && (() => {
         const e = data.efectivo || {};
@@ -773,6 +896,51 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
+          </Section>
+        </div>
+      )}
+
+      {tab === 'lives' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard label="Lives" value={data.lives_resumen?.cantidad ?? 0} />
+            <StatCard label="Ventas en lives" value={formatMoney(data.lives_resumen?.ventas)} amount={data.lives_resumen?.ventas} />
+            <StatCard
+              label="Utilidad lives"
+              value={<Money value={data.lives_resumen?.utilidad} signed />}
+              amount={data.lives_resumen?.utilidad}
+            />
+            <StatCard label="Autos en lives" value={data.lives_resumen?.autos ?? 0} />
+          </div>
+          <Section title="Lives más rentables" subtitle="Detalle completo en el módulo Lives TikTok">
+            {(data.lives_rentables || []).length === 0 ? (
+              <p className="text-sm text-gray-400">Aún no hay lives. Créalos en el menú Lives TikTok.</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Título</th>
+                      <th>Autos</th>
+                      <th>Ventas</th>
+                      <th>Utilidad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.lives_rentables.map((l) => (
+                      <tr key={l.id}>
+                        <td>{String(l.fecha).slice(0, 10)}</td>
+                        <td>{l.titulo || `Live #${l.id}`}</td>
+                        <td>{l.autos_vendidos}</td>
+                        <td>{formatMoney(l.ventas_totales)}</td>
+                        <td><Money value={l.utilidad_neta} signed /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Section>
         </div>
       )}

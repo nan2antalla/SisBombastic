@@ -8,6 +8,7 @@ const navItems = [
   { to: '/compras', label: 'Compras', icon: '🛒' },
   { to: '/inventario', label: 'Inventario', icon: '📦' },
   { to: '/ventas', label: 'Ventas', icon: '💰' },
+  { to: '/lives', label: 'Lives TikTok', icon: '📺' },
   { to: '/gastos', label: 'Gastos', icon: '💸' },
   { to: '/caja', label: 'Caja', icon: '🏦' },
 ];

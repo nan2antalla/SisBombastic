@@ -161,6 +161,11 @@ CREATE TABLE IF NOT EXISTS caja_cierres (
 CREATE TABLE IF NOT EXISTS lives (
   id SERIAL PRIMARY KEY,
   fecha DATE NOT NULL,
+  titulo TEXT,
+  plataforma TEXT NOT NULL DEFAULT 'tiktok',
+  estado TEXT NOT NULL DEFAULT 'finalizado' CHECK (estado IN (
+    'programado', 'en_vivo', 'finalizado', 'cancelado'
+  )),
   hora_inicio TEXT,
   hora_fin TEXT,
   autos_vendidos INTEGER DEFAULT 0,
@@ -173,6 +178,8 @@ CREATE TABLE IF NOT EXISTS lives (
   observaciones TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_lives_fecha ON lives(fecha);
 
 CREATE TABLE IF NOT EXISTS empleados (
   id SERIAL PRIMARY KEY,

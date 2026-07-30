@@ -14,6 +14,7 @@ export default function Ventas() {
   const [ventas, setVentas] = useState([]);
   const [inventario, setInventario] = useState([]);
   const [clientes, setClientes] = useState([]);
+  const [lives, setLives] = useState([]);
   const [modal, setModal] = useState(false);
   const [detalle, setDetalle] = useState(null);
   const [editForm, setEditForm] = useState(null);
@@ -31,6 +32,7 @@ export default function Ventas() {
     delivery: '',
     estado: 'pagado',
     notas: '',
+    live_id: '',
     items: [{ ...emptyItem }],
   });
   const [error, setError] = useState('');
@@ -43,10 +45,12 @@ export default function Ventas() {
 
   const load = (params = {}) => api.ventas.list(params).then(setVentas).catch(console.error);
   const loadClientes = () => api.clientes.list().then(setClientes).catch(console.error);
+  const loadLives = () => api.lives.list().then(setLives).catch(console.error);
 
   useEffect(() => {
     load();
     loadClientes();
+    loadLives();
     api.inventario.list({ estado: 'disponible' }).then(setInventario).catch(console.error);
   }, []);
 
@@ -60,6 +64,7 @@ export default function Ventas() {
       delivery: '',
       estado: 'pagado',
       notas: '',
+      live_id: '',
       items: [{ ...emptyItem }],
     });
     setError('');
@@ -132,6 +137,7 @@ export default function Ventas() {
         cliente_id: Number(form.cliente_id),
         cliente_nombre: cliente?.nombre || form.cliente_nombre,
         delivery: Number(form.delivery || 0),
+        live_id: form.canal === 'live' && form.live_id ? Number(form.live_id) : null,
         items: form.items.map((i) => ({
           inventario_id: i.inventario_id ? Number(i.inventario_id) : null,
           producto_nombre: i.producto_nombre,
@@ -143,6 +149,10 @@ export default function Ventas() {
       setModal(false);
       load();
       loadClientes();
+      loadLives();
+      if (form.live_id) {
+        api.lives.sincronizar(Number(form.live_id)).catch(() => {});
+      }
       api.inventario.list({ estado: 'disponible' }).then(setInventario);
     } catch (err) {
       setError(err.message);
@@ -194,6 +204,7 @@ export default function Ventas() {
       delivery: v.delivery ?? '',
       estado: v.estado || 'pagado',
       notas: v.notas || '',
+      live_id: v.live_id ? String(v.live_id) : '',
     });
   };
 
@@ -223,6 +234,7 @@ export default function Ventas() {
         delivery: Number(editForm.delivery || 0),
         estado: editForm.estado,
         notas: editForm.notas,
+        live_id: editForm.canal === 'live' && editForm.live_id ? Number(editForm.live_id) : null,
       });
       setDetalle(updated);
       setEditForm({
@@ -234,8 +246,10 @@ export default function Ventas() {
         delivery: updated.delivery ?? '',
         estado: updated.estado || 'pagado',
         notas: updated.notas || '',
+        live_id: updated.live_id ? String(updated.live_id) : '',
       });
       load();
+      loadLives();
       api.inventario.list({ estado: 'disponible' }).then(setInventario);
     } catch (err) {
       setEditError(err.message);
@@ -409,13 +423,29 @@ export default function Ventas() {
               <label className="block text-xs font-medium text-gray-600 mb-1">Canal *</label>
               <select
                 value={form.canal}
-                onChange={(e) => setForm({ ...form, canal: e.target.value })}
+                onChange={(e) => setForm({ ...form, canal: e.target.value, live_id: e.target.value === 'live' ? form.live_id : '' })}
                 required
               >
                 <option value="">Seleccione...</option>
                 {CANALES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </div>
+            {form.canal === 'live' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Live TikTok</label>
+                <select
+                  value={form.live_id}
+                  onChange={(e) => setForm({ ...form, live_id: e.target.value })}
+                >
+                  <option value="">Sin vincular...</option>
+                  {lives.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {formatDate(l.fecha)} — {l.titulo || `Live #${l.id}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Delivery</label>
               <input type="number" min="0" step="0.01" value={form.delivery} onChange={(e) => setForm({ ...form, delivery: e.target.value })} />
@@ -593,7 +623,11 @@ export default function Ventas() {
                   required
                   disabled={ventaCancelada}
                   value={editForm.canal}
-                  onChange={(e) => setEditForm({ ...editForm, canal: e.target.value })}
+                  onChange={(e) => setEditForm({
+                    ...editForm,
+                    canal: e.target.value,
+                    live_id: e.target.value === 'live' ? editForm.live_id : '',
+                  })}
                 >
                   <option value="">Seleccionar...</option>
                   {CANALES.map((c) => (
@@ -601,6 +635,23 @@ export default function Ventas() {
                   ))}
                 </select>
               </div>
+              {editForm.canal === 'live' && (
+                <div>
+                  <label>Live TikTok</label>
+                  <select
+                    disabled={ventaCancelada}
+                    value={editForm.live_id || ''}
+                    onChange={(e) => setEditForm({ ...editForm, live_id: e.target.value })}
+                  >
+                    <option value="">Sin vincular...</option>
+                    {lives.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {formatDate(l.fecha)} — {l.titulo || `Live #${l.id}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label>Estado</label>
                 <select

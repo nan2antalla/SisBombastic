@@ -121,7 +121,16 @@ export async function crearVenta(data) {
 
     await actualizarClienteStats(clienteId, clienteNombre, totalVenta, data.fecha, client);
 
-    return obtenerVenta(ventaId);
+    const ventaCreada = await obtenerVenta(ventaId);
+    return ventaCreada;
+  }).then(async (venta) => {
+    if (venta?.live_id) {
+      try {
+        const { sincronizarLive } = await import('./lives.service.js');
+        await sincronizarLive(venta.live_id);
+      } catch { /* opcional */ }
+    }
+    return venta;
   });
 }
 
@@ -242,6 +251,8 @@ export async function actualizarVenta(id, data) {
   const delivery = Number.isFinite(deliveryRaw) ? deliveryRaw : 0;
   const estado = data.estado ?? actual.estado;
   const notas = data.notas !== undefined ? data.notas : actual.notas;
+  let liveId = data.live_id !== undefined ? (data.live_id || null) : actual.live_id;
+  if (canal !== 'live') liveId = null;
 
   if (!metodoPago) throw Object.assign(new Error('El método de pago es obligatorio'), { status: 400 });
   if (!canal) throw Object.assign(new Error('El canal es obligatorio'), { status: 400 });
@@ -260,8 +271,8 @@ export async function actualizarVenta(id, data) {
   await query(`
     UPDATE ventas SET
       fecha=$1, cliente_id=$2, cliente_nombre=$3, metodo_pago=$4, canal=$5,
-      delivery=$6, estado=$7, notas=$8, total_venta=$9, total_costo=$10, utilidad_bruta=$11
-    WHERE id=$12
+      delivery=$6, estado=$7, notas=$8, total_venta=$9, total_costo=$10, utilidad_bruta=$11, live_id=$12
+    WHERE id=$13
   `, [
     fecha,
     clienteId || null,
@@ -274,11 +285,20 @@ export async function actualizarVenta(id, data) {
     totalVenta,
     totalCosto,
     utilidadBruta,
+    liveId,
     id,
   ]);
 
   const venta = await obtenerVenta(id);
   await sincronizarCajaDeVenta(venta);
+
+  // Refrescar métricas del live anterior y del nuevo
+  try {
+    const { sincronizarLive } = await import('./lives.service.js');
+    if (actual.live_id) await sincronizarLive(actual.live_id);
+    if (liveId && liveId !== actual.live_id) await sincronizarLive(liveId);
+  } catch { /* live opcional */ }
+
   return venta;
 }
 
