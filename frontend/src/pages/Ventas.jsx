@@ -476,7 +476,12 @@ export default function Ventas() {
                   <select value={item.inventario_id} onChange={(e) => selectProducto(idx, e.target.value)}>
                     <option value="">Manual...</option>
                     {opcionesInventario(idx).map((inv) => (
-                      <option key={inv.id} value={inv.id}>{inv.nombre} (stock: {inv.cantidad})</option>
+                      <option key={inv.id} value={inv.id}>
+                        {inv.tipo_item === 'caja_cerrada' ? '📦 ' : ''}
+                        {inv.nombre}
+                        {inv.tipo_item === 'caja_cerrada' ? ' [CAJA CERRADA]' : ''}
+                        {' '}(stock: {inv.cantidad})
+                      </option>
                     ))}
                   </select>
                 </div>

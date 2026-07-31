@@ -111,7 +111,9 @@ export async function sincronizarLive(id) {
       COALESCE((
         SELECT SUM(vi.cantidad) FROM venta_items vi
         JOIN ventas vx ON vx.id = vi.venta_id
+        LEFT JOIN inventario i ON i.id = vi.inventario_id
         WHERE vx.live_id = $1 AND vx.estado != 'cancelado'
+          AND COALESCE(i.tipo_item, 'auto_individual') = 'auto_individual'
       ), 0) AS autos_vendidos
     FROM ventas v
     WHERE v.live_id = $1 AND v.estado != 'cancelado'

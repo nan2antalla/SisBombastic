@@ -157,7 +157,16 @@ export default function Dashboard() {
               hint="Lo que deberías tener en efectivo"
             />
             <StatCard label="Capital en inventario" value={formatMoney(data.valor_inventario)} hint="Dinero trabado en stock" />
-            <StatCard label="Autos vendidos (mes)" value={data.autos_vendidos_mes} />
+            <StatCard
+              label="Autos vendidos (mes)"
+              value={data.autos_vendidos_mes}
+              hint="Solo autos individuales (sin cajas cerradas)"
+            />
+            <StatCard
+              label="Cajas cerradas vendidas"
+              value={data.cajas_cerradas_vendidas_mes ?? 0}
+              hint="Cases vendidos completos, sin abrir"
+            />
             <StatCard
               label="Margen promedio"
               value={<Money value={data.margen_promedio} percent signed />}

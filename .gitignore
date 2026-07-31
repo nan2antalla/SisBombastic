@@ -2,3 +2,6 @@ node_modules/
 dist/
 .env
 *.log
+*.dump
+*_backup.sql
+*_backup.dump

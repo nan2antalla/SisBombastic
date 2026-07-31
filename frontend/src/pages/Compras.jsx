@@ -197,6 +197,11 @@ export default function Compras() {
                   {c.pagado_desde_caja !== false && c.pagado_desde_caja !== 0
                     ? <span className="badge bg-[#ffcc00]/20 text-[#ffcc00]">Reinversión (caja)</span>
                     : <span className="badge bg-sky-500/15 text-sky-300">Inversión externa</span>}
+                  {c.es_caja !== false && c.es_caja !== 0 && ['mainline', 'premium', 'rlc'].includes(c.tipo_compra) && (
+                    <div className="mt-1">
+                      <span className="badge bg-violet-500/15 text-violet-300">Caja cerrada</span>
+                    </div>
+                  )}
                 </td>
                 <td><Badge label={labelOf(ESTADOS_COMPRA, c.estado)} colorClass={badgeClass(ESTADOS_COMPRA, c.estado)} /></td>
                 <td className="space-x-2 whitespace-nowrap">
@@ -267,11 +272,23 @@ export default function Compras() {
             <label className="block text-xs font-medium text-gray-600 mb-1">Descripción</label>
             <input value={form.descripcion} onChange={set('descripcion')} required placeholder="Ej: Case A 2025" />
           </div>
-          {form.tipo_compra === 'mainline' && (
-            <label className="flex items-center gap-2 text-sm min-h-[44px]">
-              <input type="checkbox" className="!min-h-0 w-4 h-4" checked={form.es_caja} onChange={(e) => setForm({ ...form, es_caja: e.target.checked })} />
-              Es caja cerrada (case)
-            </label>
+          {['mainline', 'premium', 'rlc'].includes(form.tipo_compra) && (
+            <div className="panel-muted space-y-2">
+              <label className="flex items-center gap-2 text-sm min-h-[44px]">
+                <input
+                  type="checkbox"
+                  className="!min-h-0 w-4 h-4"
+                  checked={form.es_caja}
+                  onChange={(e) => setForm({ ...form, es_caja: e.target.checked })}
+                />
+                Es caja cerrada (case)
+              </label>
+              <p className="text-xs text-gray-400">
+                {form.es_caja
+                  ? 'Entra al inventario como caja cerrada. Podés venderla completa (sin abrir) o abrirla después en Inventario. La venta de caja NO cuenta como “autos vendidos” en el dashboard.'
+                  : 'Si desmarcás, entra como auto(s) individual(es) listo(s) para venta unitaria.'}
+              </p>
+            </div>
           )}
           <div className="panel-muted space-y-3">
             <div>

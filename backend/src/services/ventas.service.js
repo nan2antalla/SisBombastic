@@ -445,12 +445,47 @@ export async function ventasDelPeriodo(desde, hasta) {
 }
 
 export async function autosVendidos(desde, hasta) {
+  // Solo autos individuales. Cajas cerradas, accesorios y premios NO cuentan.
   const row = await getOne(`
     SELECT COALESCE(SUM(vi.cantidad),0) as total
-    FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id
-    WHERE v.estado != 'cancelado' AND v.fecha >= $1 AND v.fecha <= $2
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id
+    LEFT JOIN inventario i ON i.id = vi.inventario_id
+    WHERE v.estado != 'cancelado'
+      AND v.fecha >= $1 AND v.fecha <= $2
+      AND COALESCE(i.tipo_item, 'auto_individual') = 'auto_individual'
   `, [desde, hasta]);
   return Number(row?.total || 0);
+}
+
+export async function cajasCerradasVendidas(desde, hasta) {
+  const row = await getOne(`
+    SELECT COALESCE(SUM(vi.cantidad),0) as total
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id
+    JOIN inventario i ON i.id = vi.inventario_id
+    WHERE v.estado != 'cancelado'
+      AND v.fecha >= $1 AND v.fecha <= $2
+      AND i.tipo_item = 'caja_cerrada'
+  `, [desde, hasta]);
+  return Number(row?.total || 0);
+}
+
+export async function ventasPorTipoItem(desde, hasta) {
+  return getAll(`
+    SELECT
+      COALESCE(i.tipo_item, 'auto_individual') AS tipo_item,
+      COALESCE(SUM(vi.cantidad), 0) AS unidades,
+      COALESCE(SUM(vi.precio_venta * vi.cantidad), 0) AS ingresos,
+      COALESCE(SUM(vi.utilidad), 0) AS utilidad
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id
+    LEFT JOIN inventario i ON i.id = vi.inventario_id
+    WHERE v.estado != 'cancelado'
+      AND v.fecha >= $1 AND v.fecha <= $2
+    GROUP BY 1
+    ORDER BY unidades DESC
+  `, [desde, hasta]);
 }
 
 export async function ventasPorDia(desde, hasta) {

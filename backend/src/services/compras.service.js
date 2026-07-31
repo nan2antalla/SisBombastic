@@ -138,7 +138,10 @@ async function ingresarCompraAInventario(compraId) {
   if (existe) return;
 
   const categoria = TIPOS_COMPRA_A_CATEGORIA[compra.tipo_compra] || 'otro';
-  const esCaja = compra.tipo_compra === 'mainline' && compra.es_caja !== false;
+  // Caja cerrada: mainline / premium / rlc marcadas como es_caja
+  // Se pueden vender completas o abrirse después desde Inventario.
+  const tiposConCaja = ['mainline', 'premium', 'rlc'];
+  const esCaja = tiposConCaja.includes(compra.tipo_compra) && compra.es_caja !== false && compra.es_caja !== 0;
   const accesorio = ['accesorio', 'protector', 'sticker', 'tarjeta'].includes(compra.tipo_compra);
   const tipoItem = esCaja ? 'caja_cerrada' : (accesorio ? 'accesorio' : 'auto_individual');
 
