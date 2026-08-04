@@ -225,7 +225,21 @@ export default function Dashboard() {
               value={<Money value={data.margen_promedio} percent signed />}
               amount={data.margen_promedio}
             />
-            <StatCard label="Ticket promedio" value={formatMoney(data.ticket_promedio)} />
+            <StatCard
+              label="Ticket autos de caja"
+              value={formatMoney(data.ticket_promedio_por_tipo?.auto_caja)}
+              hint="Precio promedio por unidad vendida"
+            />
+            <StatCard
+              label="Ticket otros ítems"
+              value={formatMoney(data.ticket_promedio_por_tipo?.otro_item)}
+              hint="Cajas cerradas, accesorios, etc."
+            />
+            <StatCard
+              label="Ticket ítems manuales"
+              value={formatMoney(data.ticket_promedio_por_tipo?.manual)}
+              hint="Sin inventario — no entra en ROI"
+            />
             <StatCard
               label="Días promedio a vender"
               value={data.dias_promedio_venta != null ? `${data.dias_promedio_venta} días` : '—'}

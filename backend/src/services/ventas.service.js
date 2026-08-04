@@ -471,6 +471,7 @@ export async function metricasPorCategoria(desde, hasta) {
     if (!map[k].unidades && map[k].unidades !== 0) {
       map[k] = { unidades: 0, ingresos: 0, costo: 0, utilidad: 0 };
     }
+    map[k].ticket_promedio = map[k].unidades > 0 ? map[k].ingresos / map[k].unidades : 0;
   }
 
   const inventario = {
@@ -479,6 +480,7 @@ export async function metricasPorCategoria(desde, hasta) {
     costo: map.auto_caja.costo + map.otro_item.costo,
     utilidad: map.auto_caja.utilidad + map.otro_item.utilidad,
   };
+  inventario.ticket_promedio = inventario.unidades > 0 ? inventario.ingresos / inventario.unidades : 0;
 
   return {
     auto_caja: map.auto_caja,

@@ -934,6 +934,18 @@ export async function obtenerDashboardDecisiones(opts = {}) {
     margen_promedio: margenMes,
     gastos_mes: n(gastosMes?.total),
     ticket_promedio: velocidad.ticket_promedio,
+    ticket_promedio_por_tipo: {
+      auto_caja: metricasMes.auto_caja.ticket_promedio,
+      otro_item: metricasMes.otro_item.ticket_promedio,
+      manual: metricasMes.manual.ticket_promedio,
+      inventario: inv.ticket_promedio,
+    },
+    ticket_promedio_por_tipo_anterior: {
+      auto_caja: metricasPrev.auto_caja.ticket_promedio,
+      otro_item: metricasPrev.otro_item.ticket_promedio,
+      manual: metricasPrev.manual.ticket_promedio,
+      inventario: invPrev.ticket_promedio,
+    },
     utilidad_promedio_venta: velocidad.utilidad_promedio,
     dias_promedio_venta: velocidad.dias_promedio,
     utilidad_historica: n(utilidadTotalHist?.u),
