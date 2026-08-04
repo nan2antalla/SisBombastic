@@ -1,5 +1,6 @@
 import { getOne, getAll, query, withTransaction } from '../db/database.js';
-import { calcularUtilidadBruta } from '../utils/calculos.js';
+import { calcularUtilidadBruta, inicioMes, finMes, ultimosMeses } from '../utils/calculos.js';
+import { SQL_CATEGORIA_VENTA, SQL_JOIN_VENTA_ITEMS } from '../utils/ventasClasificacion.js';
 import * as inventarioService from './inventario.service.js';
 import * as cajaService from './caja.service.js';
 
@@ -444,31 +445,85 @@ export async function ventasDelPeriodo(desde, hasta) {
   `, [desde, hasta]);
 }
 
-export async function autosVendidos(desde, hasta) {
-  // Solo autos individuales. Cajas cerradas, accesorios y premios NO cuentan.
-  const row = await getOne(`
-    SELECT COALESCE(SUM(vi.cantidad),0) as total
-    FROM venta_items vi
-    JOIN ventas v ON v.id = vi.venta_id
-    LEFT JOIN inventario i ON i.id = vi.inventario_id
-    WHERE v.estado != 'cancelado'
+export async function metricasPorCategoria(desde, hasta) {
+  const rows = await getAll(`
+    SELECT
+      ${SQL_CATEGORIA_VENTA} AS categoria,
+      COALESCE(SUM(vi.cantidad), 0) AS unidades,
+      COALESCE(SUM(vi.precio_venta * vi.cantidad), 0) AS ingresos,
+      COALESCE(SUM(vi.costo_unitario * vi.cantidad), 0) AS costo,
+      COALESCE(SUM(vi.utilidad), 0) AS utilidad
+    ${SQL_JOIN_VENTA_ITEMS}
       AND v.fecha >= $1 AND v.fecha <= $2
-      AND COALESCE(i.tipo_item, 'auto_individual') = 'auto_individual'
+    GROUP BY 1
   `, [desde, hasta]);
-  return Number(row?.total || 0);
+
+  const map = { auto_caja: {}, otro_item: {}, manual: {} };
+  for (const r of rows) {
+    map[r.categoria] = {
+      unidades: Number(r.unidades || 0),
+      ingresos: Number(r.ingresos || 0),
+      costo: Number(r.costo || 0),
+      utilidad: Number(r.utilidad || 0),
+    };
+  }
+  for (const k of ['auto_caja', 'otro_item', 'manual']) {
+    if (!map[k].unidades && map[k].unidades !== 0) {
+      map[k] = { unidades: 0, ingresos: 0, costo: 0, utilidad: 0 };
+    }
+  }
+
+  const inventario = {
+    unidades: map.auto_caja.unidades + map.otro_item.unidades,
+    ingresos: map.auto_caja.ingresos + map.otro_item.ingresos,
+    costo: map.auto_caja.costo + map.otro_item.costo,
+    utilidad: map.auto_caja.utilidad + map.otro_item.utilidad,
+  };
+
+  return {
+    auto_caja: map.auto_caja,
+    otro_item: map.otro_item,
+    manual: map.manual,
+    inventario,
+  };
 }
 
+export async function autosVendidos(desde, hasta) {
+  const m = await metricasPorCategoria(desde, hasta);
+  return m.auto_caja.unidades;
+}
+
+export async function otrosItemsVendidos(desde, hasta) {
+  const m = await metricasPorCategoria(desde, hasta);
+  return m.otro_item.unidades;
+}
+
+/** @deprecated usar otrosItemsVendidos — cajas cerradas ya están en otro_item */
 export async function cajasCerradasVendidas(desde, hasta) {
   const row = await getOne(`
     SELECT COALESCE(SUM(vi.cantidad),0) as total
-    FROM venta_items vi
-    JOIN ventas v ON v.id = vi.venta_id
-    JOIN inventario i ON i.id = vi.inventario_id
-    WHERE v.estado != 'cancelado'
+    ${SQL_JOIN_VENTA_ITEMS}
       AND v.fecha >= $1 AND v.fecha <= $2
       AND i.tipo_item = 'caja_cerrada'
   `, [desde, hasta]);
   return Number(row?.total || 0);
+}
+
+export async function ventasPorMesResumen(cantidadMeses = 6) {
+  const meses = ultimosMeses(cantidadMeses);
+  const desde = meses[meses.length - 1]?.desde || inicioMes();
+  return getAll(`
+    SELECT
+      TO_CHAR(v.fecha, 'YYYY-MM') AS periodo,
+      ${SQL_CATEGORIA_VENTA} AS categoria,
+      COALESCE(SUM(vi.cantidad), 0) AS unidades,
+      COALESCE(SUM(vi.precio_venta * vi.cantidad), 0) AS ingresos,
+      COALESCE(SUM(vi.utilidad), 0) AS utilidad
+    ${SQL_JOIN_VENTA_ITEMS}
+      AND v.fecha >= $1
+    GROUP BY 1, 2
+    ORDER BY 1 ASC
+  `, [desde]);
 }
 
 export async function ventasPorTipoItem(desde, hasta) {

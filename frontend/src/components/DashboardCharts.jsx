@@ -44,7 +44,10 @@ function moneyTooltip({ active, payload, label }) {
     <div className="bg-[#111] border border-[#2a2a2a] rounded-lg px-3 py-2 text-xs shadow-lg">
       <p className="text-gray-400 mb-1">{label}</p>
       {payload.map((p) => {
-        const isCount = p.dataKey === 'vendidos' || p.dataKey === 'cantidad' || p.dataKey === 'ventas_count';
+        const metrica = payload[0]?.payload?.metrica;
+        const isUnitMetric = metrica === 'Autos caja' || metrica === 'Otros ítems';
+        const isCount = ['vendidos', 'cantidad', 'ventas_count', 'autos', 'otros_items'].includes(p.dataKey)
+          || (isUnitMetric && (p.dataKey === 'actual' || p.dataKey === 'anterior'));
         const neg = !isCount && Number(p.value) < 0;
         return (
           <p key={p.dataKey} style={{ color: neg ? RED : (p.color || BRAND) }}>
@@ -63,12 +66,43 @@ function shortDate(fecha) {
   return s;
 }
 
-export default function DashboardCharts({ graficos }) {
+export default function DashboardCharts({ graficos, periodo }) {
   const g = graficos || {};
   const ventasDia = (g.ventas_por_dia || []).map((r) => ({
     ...r,
     label: shortDate(r.fecha),
   }));
+  const ventasDiaPrev = (g.ventas_por_dia_anterior || []).map((r) => ({
+    ...r,
+    label: shortDate(r.fecha),
+  }));
+  const comparativoMeses = (g.comparativo_meses || []).map((r) => ({
+    ...r,
+    label: r.label || r.periodo,
+  }));
+  const mesVsAnt = g.mes_vs_anterior || {};
+  const comparativoBarras = mesVsAnt.actual ? [
+    {
+      metrica: 'Ventas',
+      actual: mesVsAnt.actual.ventas,
+      anterior: mesVsAnt.anterior?.ventas,
+    },
+    {
+      metrica: 'Utilidad',
+      actual: mesVsAnt.actual.utilidad,
+      anterior: mesVsAnt.anterior?.utilidad,
+    },
+    {
+      metrica: 'Autos caja',
+      actual: mesVsAnt.actual.autos,
+      anterior: mesVsAnt.anterior?.autos,
+    },
+    {
+      metrica: 'Otros ítems',
+      actual: mesVsAnt.actual.otros,
+      anterior: mesVsAnt.anterior?.otros,
+    },
+  ] : [];
   const topProductos = (g.top_productos || []).map((r) => ({
     ...r,
     nombreCorto: (r.nombre || '').length > 18 ? `${(r.nombre || '').slice(0, 16)}…` : r.nombre,
@@ -94,8 +128,68 @@ export default function DashboardCharts({ graficos }) {
     <div className="space-y-4 sm:space-y-6">
       <div className="grid lg:grid-cols-2 gap-4 sm:gap-6">
         <ChartCard
-          title="Ventas últimos 30 días"
-          subtitle="Ingresos y utilidad por día"
+          title={`Mes vs mes anterior`}
+          subtitle={`${mesVsAnt.actual?.label || periodo?.label || 'Actual'} vs ${mesVsAnt.anterior?.label || 'anterior'}`}
+          empty={comparativoBarras.length === 0}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={comparativoBarras} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+              <XAxis dataKey="metrica" tick={{ fill: GRAY, fontSize: 11 }} />
+              <YAxis tick={{ fill: GRAY, fontSize: 11 }} width={50} />
+              <Tooltip content={moneyTooltip} />
+              <Legend />
+              <Bar dataKey="actual" name="Mes seleccionado" fill={BRAND} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="anterior" name="Mes anterior" fill="#60a5fa" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard
+          title="Evolución últimos 6 meses"
+          subtitle="Ventas con inventario vs utilidad"
+          empty={comparativoMeses.length === 0}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={comparativoMeses} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+              <XAxis dataKey="label" tick={{ fill: GRAY, fontSize: 10 }} />
+              <YAxis tick={{ fill: GRAY, fontSize: 11 }} width={50} />
+              <Tooltip content={moneyTooltip} />
+              <Legend />
+              <Bar dataKey="ventas_inventario" name="Ventas inv." fill={BRAND} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="utilidad_inventario" name="Utilidad" radius={[4, 4, 0, 0]}>
+                {comparativoMeses.map((p, i) => (
+                  <Cell key={i} fill={Number(p.utilidad_inventario) >= 0 ? GREEN : RED} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard
+          title="Unidades por mes"
+          subtitle="Autos de caja vs otros ítems"
+          empty={comparativoMeses.length === 0}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={comparativoMeses} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+              <XAxis dataKey="label" tick={{ fill: GRAY, fontSize: 10 }} />
+              <YAxis tick={{ fill: GRAY, fontSize: 11 }} width={40} />
+              <Tooltip content={moneyTooltip} />
+              <Legend />
+              <Bar dataKey="autos" name="Autos caja" fill={BRAND} stackId="u" />
+              <Bar dataKey="otros_items" name="Otros ítems" fill="#60a5fa" stackId="u" />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4 sm:gap-6">
+        <ChartCard
+          title={`Ventas diarias — ${periodo?.label || 'mes seleccionado'}`}
+          subtitle="Solo inventario con costo (sin manuales)"
           empty={ventasDia.length === 0}
         >
           <ResponsiveContainer width="100%" height="100%">
@@ -116,6 +210,30 @@ export default function DashboardCharts({ graficos }) {
               <Tooltip content={moneyTooltip} />
               <Legend />
               <Area type="monotone" dataKey="ventas" name="Ventas" stroke={BRAND} fill="url(#fillVentas)" strokeWidth={2} />
+              <Area type="monotone" dataKey="utilidad" name="Utilidad" stroke={GREEN} fill="url(#fillUtil)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard
+          title={`Mes anterior — ${mesVsAnt.anterior?.label || 'comparación'}`}
+          subtitle="Misma métrica, período previo"
+          empty={ventasDiaPrev.length === 0}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={ventasDiaPrev} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="fillVentasPrev" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#60a5fa" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#60a5fa" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+              <XAxis dataKey="label" tick={{ fill: GRAY, fontSize: 11 }} />
+              <YAxis tick={{ fill: GRAY, fontSize: 11 }} width={50} />
+              <Tooltip content={moneyTooltip} />
+              <Legend />
+              <Area type="monotone" dataKey="ventas" name="Ventas" stroke="#60a5fa" fill="url(#fillVentasPrev)" strokeWidth={2} />
               <Area type="monotone" dataKey="utilidad" name="Utilidad" stroke={GREEN} fill="url(#fillUtil)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>

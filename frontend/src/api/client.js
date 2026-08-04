@@ -59,7 +59,10 @@ export const api = {
     me: () => request('/auth/me'),
   },
 
-  dashboard: () => request('/dashboard'),
+  dashboard: (mes) => {
+    const q = mes ? `?mes=${encodeURIComponent(mes)}` : '';
+    return request(`/dashboard${q}`);
+  },
   reporte: (desde, hasta) => request(`/dashboard/reporte?desde=${desde}&hasta=${hasta}`),
 
   proveedores: {

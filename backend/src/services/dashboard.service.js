@@ -4,7 +4,8 @@ import * as gastosService from './gastos.service.js';
 import * as inventarioService from './inventario.service.js';
 import * as cajaService from './caja.service.js';
 import * as livesService from './lives.service.js';
-import { hoy, inicioMes, finMes, calcularMargen, haceDias } from '../utils/calculos.js';
+import { hoy, calcularMargen, haceDias, periodoDesdeMes, mesAnterior, ultimosMeses } from '../utils/calculos.js';
+import { SQL_CATEGORIA_VENTA } from '../utils/ventasClasificacion.js';
 
 function n(v) {
   return Number(v || 0);
@@ -345,33 +346,22 @@ export async function stockCritico() {
   `);
 }
 
-export async function roiYPredicciones() {
+export async function roiYPredicciones(desdeMes, hastaMes, esMesActual = false) {
   const fechaHoy = hoy();
-  const desdeMes = inicioMes();
-  const hastaMes = finMes();
-  const diaHoy = Number(fechaHoy.slice(8, 10));
+  const diaRef = esMesActual ? Number(fechaHoy.slice(8, 10)) : Number(hastaMes.slice(8, 10));
   const diasMes = Number(hastaMes.slice(8, 10));
-  const diasRestantes = Math.max(0, diasMes - diaHoy);
-  const diasTranscurridos = Math.max(1, diaHoy);
+  const diasRestantes = esMesActual ? Math.max(0, diasMes - diaRef) : 0;
+  const diasTranscurridos = Math.max(1, esMesActual ? diaRef : diasMes);
 
   const [
-    ventasMes,
     gastosMes,
     comprasMes,
     reinversionesMes,
     valorInventario,
-    porMes,
+    porMesRaw,
     ventas30,
-    autosMes,
+    metricas,
   ] = await Promise.all([
-    getOne(`
-      SELECT
-        COALESCE(SUM(total_venta),0) AS total,
-        COALESCE(SUM(utilidad_bruta),0) AS utilidad_bruta,
-        COALESCE(SUM(total_costo),0) AS total_costo,
-        COUNT(*) AS cantidad
-      FROM ventas WHERE estado != 'cancelado' AND fecha >= $1 AND fecha <= $2
-    `, [desdeMes, hastaMes]),
     getOne(`
       SELECT COALESCE(SUM(monto),0) AS total FROM gastos
       WHERE fecha >= $1 AND fecha <= $2
@@ -385,75 +375,106 @@ export async function roiYPredicciones() {
       WHERE tipo = 'salida_compra' AND fecha >= $1 AND fecha <= $2
     `, [desdeMes, hastaMes]),
     inventarioService.valorTotalInventario(),
-    getAll(`
-      SELECT
-        TO_CHAR(fecha, 'YYYY-MM') AS periodo,
-        COALESCE(SUM(total_venta),0) AS ventas,
-        COALESCE(SUM(utilidad_bruta),0) AS utilidad_bruta,
-        COALESCE(SUM(total_costo),0) AS costo
-      FROM ventas
-      WHERE estado != 'cancelado' AND fecha >= (CURRENT_DATE - INTERVAL '6 months')
-      GROUP BY 1
-      ORDER BY 1
-    `),
-    getAll(`
-      SELECT fecha::text AS fecha,
-             COALESCE(SUM(total_venta),0) AS ventas,
-             COALESCE(SUM(utilidad_bruta),0) AS utilidad,
-             COUNT(*) AS cantidad
-      FROM ventas
-      WHERE estado != 'cancelado' AND fecha >= $1 AND fecha <= $2
-      GROUP BY fecha
-      ORDER BY fecha
-    `, [haceDias(29), fechaHoy]),
-    ventasService.autosVendidos(desdeMes, hastaMes),
+    ventasService.ventasPorMesResumen(6),
+    esMesActual
+      ? getAll(`
+          SELECT fecha::text AS fecha,
+                 COALESCE(SUM(vi.precio_venta * vi.cantidad),0) AS ventas,
+                 COALESCE(SUM(vi.utilidad),0) AS utilidad,
+                 COUNT(DISTINCT v.id) AS cantidad
+          FROM ventas v
+          JOIN venta_items vi ON vi.venta_id = v.id
+          LEFT JOIN inventario i ON i.id = vi.inventario_id
+          WHERE v.estado != 'cancelado' AND v.fecha >= $1 AND v.fecha <= $2
+            AND NOT (
+              vi.inventario_id IS NULL
+              OR (COALESCE(vi.costo_unitario, 0) <= 0 AND COALESCE(i.costo_unitario, 0) <= 0)
+            )
+          GROUP BY fecha
+          ORDER BY fecha
+        `, [haceDias(29), fechaHoy])
+      : Promise.resolve([]),
+    ventasService.metricasPorCategoria(desdeMes, hastaMes),
   ]);
 
   const gastosPorMes = await getAll(`
     SELECT TO_CHAR(fecha, 'YYYY-MM') AS periodo, COALESCE(SUM(monto),0) AS gastos
     FROM gastos
-    WHERE fecha >= (CURRENT_DATE - INTERVAL '6 months')
+    WHERE fecha >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
     GROUP BY 1
   `);
   const comprasPorMes = await getAll(`
     SELECT TO_CHAR(fecha, 'YYYY-MM') AS periodo, COALESCE(SUM(costo_total),0) AS comprado
     FROM compras
-    WHERE fecha >= (CURRENT_DATE - INTERVAL '6 months')
+    WHERE fecha >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
     GROUP BY 1
   `);
   const gastosMap = Object.fromEntries(gastosPorMes.map((r) => [r.periodo, n(r.gastos)]));
   const comprasMap = Object.fromEntries(comprasPorMes.map((r) => [r.periodo, n(r.comprado)]));
 
-  const utilidadNetaMes = n(ventasMes?.utilidad_bruta) - n(gastosMes?.total);
+  const ventasInventario = metricas.inventario;
+  const ventasManual = metricas.manual;
+  const utilidadBrutaReal = ventasInventario.utilidad;
+  const utilidadNetaMes = utilidadBrutaReal - n(gastosMes?.total);
   const capitalInvertidoMes = Math.max(n(comprasMes?.total), n(reinversionesMes?.total), 0);
   const capitalTrabajo = capitalInvertidoMes > 0
     ? capitalInvertidoMes
-    : Math.max(n(valorInventario), n(ventasMes?.total_costo), 1);
+    : Math.max(n(valorInventario), ventasInventario.costo, 1);
 
   const roiSobreInversion = capitalTrabajo > 0 ? (utilidadNetaMes / capitalTrabajo) * 100 : 0;
   const roiSobreInventario = n(valorInventario) > 0 ? (utilidadNetaMes / n(valorInventario)) * 100 : 0;
-  const roiSobreVentas = n(ventasMes?.total) > 0 ? (utilidadNetaMes / n(ventasMes?.total)) * 100 : 0;
+  const roiSobreVentas = ventasInventario.ingresos > 0 ? (utilidadNetaMes / ventasInventario.ingresos) * 100 : 0;
 
-  const historicoRoi = porMes.map((m) => {
-    const utilidadNeta = n(m.utilidad_bruta) - (gastosMap[m.periodo] || 0);
-    const capital = Math.max(comprasMap[m.periodo] || 0, n(m.costo), 1);
-    return {
-      periodo: m.periodo,
-      ventas: n(m.ventas),
-      utilidad_bruta: n(m.utilidad_bruta),
-      utilidad_neta: utilidadNeta,
-      capital_invertido: comprasMap[m.periodo] || 0,
-      roi: (utilidadNeta / capital) * 100,
-    };
-  });
+  const porPeriodo = {};
+  for (const r of porMesRaw) {
+    if (!porPeriodo[r.periodo]) {
+      porPeriodo[r.periodo] = {
+        periodo: r.periodo,
+        ventas_inventario: 0,
+        utilidad_inventario: 0,
+        ventas_manual: 0,
+        utilidad_manual: 0,
+        autos: 0,
+        otros_items: 0,
+      };
+    }
+    const p = porPeriodo[r.periodo];
+    if (r.categoria === 'manual') {
+      p.ventas_manual += n(r.ingresos);
+      p.utilidad_manual += n(r.utilidad);
+    } else {
+      p.ventas_inventario += n(r.ingresos);
+      p.utilidad_inventario += n(r.utilidad);
+      if (r.categoria === 'auto_caja') p.autos += n(r.unidades);
+      else p.otros_items += n(r.unidades);
+    }
+  }
+
+  const historicoRoi = Object.values(porPeriodo)
+    .sort((a, b) => a.periodo.localeCompare(b.periodo))
+    .map((m) => {
+      const utilidadNeta = m.utilidad_inventario - (gastosMap[m.periodo] || 0);
+      const capital = Math.max(comprasMap[m.periodo] || 0, 1);
+      return {
+        periodo: m.periodo,
+        ventas: m.ventas_inventario,
+        ventas_manual: m.ventas_manual,
+        utilidad_bruta: m.utilidad_inventario,
+        utilidad_neta: utilidadNeta,
+        capital_invertido: comprasMap[m.periodo] || 0,
+        autos: m.autos,
+        otros_items: m.otros_items,
+        roi: (utilidadNeta / capital) * 100,
+      };
+    });
 
   const diasVentana = 30;
   const sumVentas = ventas30.reduce((a, r) => a + n(r.ventas), 0);
   const sumUtilidad = ventas30.reduce((a, r) => a + n(r.utilidad), 0);
   const sumTickets = ventas30.reduce((a, r) => a + n(r.cantidad), 0);
-  const promedioDiarioVentas = sumVentas / diasVentana;
-  const promedioDiarioUtilidad = sumUtilidad / diasVentana;
-  const promedioDiarioTickets = sumTickets / diasVentana;
+  const promedioDiarioVentas = esMesActual ? sumVentas / diasVentana : ventasInventario.ingresos / diasTranscurridos;
+  const promedioDiarioUtilidad = esMesActual ? sumUtilidad / diasVentana : utilidadBrutaReal / diasTranscurridos;
+  const promedioDiarioTickets = esMesActual ? sumTickets / diasVentana : 0;
 
   const recientes = ventas30.slice(-14);
   const anteriores = ventas30.slice(0, Math.max(0, ventas30.length - 14));
@@ -466,9 +487,10 @@ export async function roiYPredicciones() {
   const tendenciaPct = avgAnt > 0 ? ((avgRec - avgAnt) / avgAnt) * 100 : 0;
   const factorTendencia = 1 + Math.max(-0.35, Math.min(0.35, tendenciaPct / 100));
 
-  const proyeccionMesVentas = n(ventasMes?.total) + promedioDiarioVentas * factorTendencia * diasRestantes;
+  const autosMes = metricas.auto_caja.unidades;
+  const proyeccionMesVentas = ventasInventario.ingresos + promedioDiarioVentas * factorTendencia * diasRestantes;
   const proyeccionMesUtilidad = utilidadNetaMes + promedioDiarioUtilidad * factorTendencia * diasRestantes;
-  const proyeccionMesAutos = n(autosMes) + (n(autosMes) / diasTranscurridos) * factorTendencia * diasRestantes;
+  const proyeccionMesAutos = autosMes + (autosMes / diasTranscurridos) * factorTendencia * diasRestantes;
 
   let interpretacion = 'Estable';
   if (tendenciaPct >= 15) interpretacion = 'Al alza';
@@ -478,6 +500,12 @@ export async function roiYPredicciones() {
     roi: {
       mes_actual: {
         utilidad_neta: utilidadNetaMes,
+        utilidad_bruta_inventario: utilidadBrutaReal,
+        ventas_inventario: ventasInventario.ingresos,
+        ventas_manuales: ventasManual.ingresos,
+        unidades_manuales: ventasManual.unidades,
+        autos_de_caja: autosMes,
+        otros_items: metricas.otro_item.unidades,
         capital_invertido: capitalInvertidoMes,
         capital_usado: capitalTrabajo,
         valor_inventario: n(valorInventario),
@@ -486,11 +514,12 @@ export async function roiYPredicciones() {
         roi_sobre_ventas: roiSobreVentas,
         reinversiones: n(reinversionesMes?.total),
         compras_del_mes: n(comprasMes?.total),
-        formula: 'ROI = Utilidad neta del mes / Capital invertido (compras del mes, o inventario/costo si no hubo compras)',
+        gastos_mes: n(gastosMes?.total),
+        formula: 'ROI = Utilidad neta (solo inventario con costo) / Capital invertido del mes. Ventas manuales sin inversión no entran.',
       },
       historico: historicoRoi,
     },
-    predicciones: {
+    predicciones: esMesActual ? {
       dias_restantes_mes: diasRestantes,
       dias_transcurridos: diasTranscurridos,
       tendencia_pct: tendenciaPct,
@@ -507,12 +536,26 @@ export async function roiYPredicciones() {
         utilidad: promedioDiarioUtilidad * factorTendencia * 7,
         tickets: promedioDiarioTickets * factorTendencia * 7,
       },
-      nota: 'Basado en promedio de los últimos 30 días, ajustado por tendencia (últimos 14 vs 14 anteriores).',
+      nota: 'Basado en ventas con inventario (sin manuales). Promedio 30 días ajustado por tendencia.',
+    } : {
+      dias_restantes_mes: 0,
+      dias_transcurridos: diasTranscurridos,
+      tendencia_pct: null,
+      interpretacion: 'Mes cerrado',
+      promedio_diario_ventas: ventasInventario.ingresos / diasTranscurridos,
+      promedio_diario_utilidad: utilidadBrutaReal / diasTranscurridos,
+      proyeccion_cierre_mes: {
+        ventas: ventasInventario.ingresos,
+        utilidad_neta: utilidadNetaMes,
+        autos: autosMes,
+      },
+      proximos_7_dias: null,
+      nota: 'Mes histórico seleccionado: se muestran totales reales, sin proyección.',
     },
   };
 }
 
-export async function analiticaClientes() {
+export async function analiticaClientes(desde, hasta) {
   const rows = await getAll(`
     WITH base AS (
       SELECT
@@ -527,6 +570,7 @@ export async function analiticaClientes() {
         MAX(v.fecha) AS ultima_compra
       FROM ventas v
       WHERE v.estado != 'cancelado'
+        AND v.fecha >= $1 AND v.fecha <= $2
       GROUP BY 1, 2
     ),
     items AS (
@@ -536,10 +580,19 @@ export async function analiticaClientes() {
         COALESCE(SUM(vi.cantidad), 0) AS unidades,
         COALESCE(SUM(vi.precio_venta * vi.cantidad), 0) AS ingresos_productos,
         COALESCE(SUM(vi.utilidad), 0) AS utilidad_items,
-        COUNT(vi.id) AS lineas
+        COUNT(vi.id) AS lineas,
+        COALESCE(SUM(vi.cantidad) FILTER (WHERE ${SQL_CATEGORIA_VENTA.replace(/\n/g, ' ')} = 'auto_caja'), 0) AS autos_caja,
+        COALESCE(SUM(vi.cantidad) FILTER (WHERE ${SQL_CATEGORIA_VENTA.replace(/\n/g, ' ')} = 'otro_item'), 0) AS otros_items,
+        COALESCE(SUM(vi.cantidad) FILTER (WHERE ${SQL_CATEGORIA_VENTA.replace(/\n/g, ' ')} = 'manual'), 0) AS manual_unidades,
+        COALESCE(SUM(vi.precio_venta * vi.cantidad) FILTER (WHERE ${SQL_CATEGORIA_VENTA.replace(/\n/g, ' ')} = 'auto_caja'), 0) AS ingresos_autos,
+        COALESCE(SUM(vi.precio_venta * vi.cantidad) FILTER (WHERE ${SQL_CATEGORIA_VENTA.replace(/\n/g, ' ')} = 'otro_item'), 0) AS ingresos_otros,
+        COALESCE(SUM(vi.precio_venta * vi.cantidad) FILTER (WHERE ${SQL_CATEGORIA_VENTA.replace(/\n/g, ' ')} = 'manual'), 0) AS ingresos_manual,
+        COALESCE(SUM(vi.utilidad) FILTER (WHERE ${SQL_CATEGORIA_VENTA.replace(/\n/g, ' ')} != 'manual'), 0) AS utilidad_inventario
       FROM ventas v
       JOIN venta_items vi ON vi.venta_id = v.id
+      LEFT JOIN inventario i ON i.id = vi.inventario_id
       WHERE v.estado != 'cancelado'
+        AND v.fecha >= $1 AND v.fecha <= $2
       GROUP BY 1, 2
     )
     SELECT
@@ -554,6 +607,13 @@ export async function analiticaClientes() {
       b.ultima_compra,
       COALESCE(i.unidades, 0) AS unidades,
       COALESCE(i.lineas, 0) AS lineas,
+      COALESCE(i.autos_caja, 0) AS autos_caja,
+      COALESCE(i.otros_items, 0) AS otros_items,
+      COALESCE(i.manual_unidades, 0) AS manual_unidades,
+      COALESCE(i.ingresos_autos, 0) AS ingresos_autos,
+      COALESCE(i.ingresos_otros, 0) AS ingresos_otros,
+      COALESCE(i.ingresos_manual, 0) AS ingresos_manual,
+      COALESCE(i.utilidad_inventario, 0) AS utilidad_inventario,
       CASE
         WHEN b.total_comprado > 0 THEN (b.utilidad_total / b.total_comprado) * 100
         ELSE 0
@@ -570,7 +630,7 @@ export async function analiticaClientes() {
     LEFT JOIN items i
       ON i.cliente_id = b.cliente_id AND i.cliente_nombre = b.cliente_nombre
     ORDER BY b.total_comprado DESC
-  `);
+  `, [desde, hasta]);
 
   const normalizados = rows.map((r) => {
     const utilidad = n(r.utilidad_total);
@@ -589,6 +649,13 @@ export async function analiticaClientes() {
       ticket_promedio: n(r.ticket_promedio),
       unidades,
       lineas: n(r.lineas),
+      autos_caja: n(r.autos_caja),
+      otros_items: n(r.otros_items),
+      manual_unidades: n(r.manual_unidades),
+      ingresos_autos: n(r.ingresos_autos),
+      ingresos_otros: n(r.ingresos_otros),
+      ingresos_manual: n(r.ingresos_manual),
+      utilidad_inventario: n(r.utilidad_inventario),
       precio_promedio_unidad: precioUnit,
       unidades_por_compra: n(r.unidades_por_compra),
       es_perdida: utilidad < 0,
@@ -635,6 +702,9 @@ export async function analiticaClientes() {
   const totalUtilidadClientes = normalizados.reduce((acc, c) => acc + c.utilidad_total, 0);
   const numComprasTotal = normalizados.reduce((acc, c) => acc + c.num_compras, 0);
   const totalUnidades = normalizados.reduce((acc, c) => acc + c.unidades, 0);
+  const totalAutosCaja = normalizados.reduce((acc, c) => acc + c.autos_caja, 0);
+  const totalOtrosItems = normalizados.reduce((acc, c) => acc + c.otros_items, 0);
+  const totalManual = normalizados.reduce((acc, c) => acc + c.manual_unidades, 0);
   const clienteMasUnidades = topUnidades[0] || null;
   const clientePeorUtilidad = peoresUtilidad[0] || null;
 
@@ -654,6 +724,9 @@ export async function analiticaClientes() {
       ticket_promedio: numComprasTotal > 0 ? totalVentasClientes / numComprasTotal : 0,
       margen_global: totalVentasClientes > 0 ? (totalUtilidadClientes / totalVentasClientes) * 100 : 0,
       unidades_totales: totalUnidades,
+      autos_caja_totales: totalAutosCaja,
+      otros_items_totales: totalOtrosItems,
+      manual_totales: totalManual,
       unidades_promedio_cliente: activos > 0 ? totalUnidades / activos : 0,
       cliente_mas_unidades: clienteMasUnidades
         ? { nombre: clienteMasUnidades.cliente_nombre, unidades: clienteMasUnidades.unidades }
@@ -668,19 +741,23 @@ export async function analiticaClientes() {
   };
 }
 
-export async function obtenerDashboardDecisiones() {
+export async function obtenerDashboardDecisiones(opts = {}) {
+  const mesActual = periodoDesdeMes().mes;
+  const periodo = periodoDesdeMes(opts.mes || mesActual);
+  const periodoPrev = periodoDesdeMes(mesAnterior(periodo.mes));
+  const esMesActual = periodo.mes === mesActual;
   const fechaHoy = hoy();
-  const desdeMes = inicioMes();
-  const hastaMes = finMes();
+  const { desde: desdeMes, hasta: hastaMes } = periodo;
+  const { desde: desdePrev, hasta: hastaPrev } = periodoPrev;
 
   const [
     ventasHoy,
-    ventasMes,
+    metricasMes,
+    metricasPrev,
     gastosMes,
+    gastosPrev,
     dineroCaja,
     valorInventario,
-    autosVendidos,
-    cajasVendidas,
     topProductos,
     bajaRotacion,
     cajas,
@@ -689,19 +766,22 @@ export async function obtenerDashboardDecisiones() {
     rentables,
     stockCriticoRows,
     ventasPorDia,
+    ventasPorDiaPrev,
     gastosPorCat,
     efectivo,
     clientesAnalitica,
     roiPred,
     livesResumen,
+    comparativoRaw,
+    cajasCerradasMes,
   ] = await Promise.all([
     ventasService.ventasDelPeriodo(fechaHoy, fechaHoy),
-    ventasService.ventasDelPeriodo(desdeMes, hastaMes),
+    ventasService.metricasPorCategoria(desdeMes, hastaMes),
+    ventasService.metricasPorCategoria(desdePrev, hastaPrev),
     gastosService.gastosDelPeriodo(desdeMes, hastaMes),
+    gastosService.gastosDelPeriodo(desdePrev, hastaPrev),
     cajaService.saldoActual(),
     inventarioService.valorTotalInventario(),
-    ventasService.autosVendidos(desdeMes, hastaMes),
-    ventasService.cajasCerradasVendidas(desdeMes, hastaMes),
     ventasService.topProductos(8, desdeMes, hastaMes),
     inventarioService.productosBajaRotacion(8),
     rentabilidadPorCaja(),
@@ -709,36 +789,148 @@ export async function obtenerDashboardDecisiones() {
     velocidadVentas(),
     productosRentables(),
     stockCritico(),
-    ventasService.ventasPorDia(haceDias(29), fechaHoy),
+    getAll(`
+      SELECT v.fecha::text AS fecha,
+             COALESCE(SUM(vi.precio_venta * vi.cantidad),0) AS ventas,
+             COALESCE(SUM(vi.utilidad),0) AS utilidad,
+             COALESCE(SUM(vi.cantidad),0) AS cantidad
+      FROM ventas v
+      JOIN venta_items vi ON vi.venta_id = v.id
+      LEFT JOIN inventario i ON i.id = vi.inventario_id
+      WHERE v.estado != 'cancelado'
+        AND v.fecha >= $1 AND v.fecha <= $2
+        AND NOT (
+          vi.inventario_id IS NULL
+          OR (COALESCE(vi.costo_unitario, 0) <= 0 AND COALESCE(i.costo_unitario, 0) <= 0)
+        )
+      GROUP BY v.fecha
+      ORDER BY v.fecha
+    `, [desdeMes, hastaMes]),
+    getAll(`
+      SELECT v.fecha::text AS fecha,
+             COALESCE(SUM(vi.precio_venta * vi.cantidad),0) AS ventas,
+             COALESCE(SUM(vi.utilidad),0) AS utilidad,
+             COALESCE(SUM(vi.cantidad),0) AS cantidad
+      FROM ventas v
+      JOIN venta_items vi ON vi.venta_id = v.id
+      LEFT JOIN inventario i ON i.id = vi.inventario_id
+      WHERE v.estado != 'cancelado'
+        AND v.fecha >= $1 AND v.fecha <= $2
+        AND NOT (
+          vi.inventario_id IS NULL
+          OR (COALESCE(vi.costo_unitario, 0) <= 0 AND COALESCE(i.costo_unitario, 0) <= 0)
+        )
+      GROUP BY v.fecha
+      ORDER BY v.fecha
+    `, [desdePrev, hastaPrev]),
     gastosService.gastosPorCategoria(desdeMes, hastaMes),
     cajaService.resumenEfectivo(),
-    analiticaClientes(),
-    roiYPredicciones(),
+    analiticaClientes(desdeMes, hastaMes),
+    roiYPredicciones(desdeMes, hastaMes, esMesActual),
     livesService.resumenLives(),
+    ventasService.ventasPorMesResumen(6),
+    ventasService.cajasCerradasVendidas(desdeMes, hastaMes),
   ]);
 
-  const utilidadNetaMes = n(ventasMes?.utilidad_bruta) - n(gastosMes?.total);
-  const margenMes = calcularMargen(n(ventasMes?.utilidad_bruta), n(ventasMes?.total));
+  const inv = metricasMes.inventario;
+  const manual = metricasMes.manual;
+  const invPrev = metricasPrev.inventario;
+  const manualPrev = metricasPrev.manual;
+
+  const utilidadNetaMes = inv.utilidad - n(gastosMes?.total);
+  const utilidadNetaPrev = invPrev.utilidad - n(gastosPrev?.total);
+  const margenMes = calcularMargen(inv.utilidad, inv.ingresos);
+
+  const variacion = (actual, anterior) => {
+    if (!anterior) return actual ? 100 : 0;
+    return ((actual - anterior) / anterior) * 100;
+  };
+
+  const comparativoMesesMap = {};
+  for (const r of comparativoRaw) {
+    if (!comparativoMesesMap[r.periodo]) {
+      comparativoMesesMap[r.periodo] = {
+        periodo: r.periodo,
+        label: periodoDesdeMes(r.periodo).label,
+        ventas_inventario: 0,
+        utilidad_inventario: 0,
+        ventas_manual: 0,
+        autos: 0,
+        otros_items: 0,
+      };
+    }
+    const p = comparativoMesesMap[r.periodo];
+    if (r.categoria === 'manual') {
+      p.ventas_manual += n(r.ingresos);
+    } else {
+      p.ventas_inventario += n(r.ingresos);
+      p.utilidad_inventario += n(r.utilidad);
+      if (r.categoria === 'auto_caja') p.autos += n(r.unidades);
+      else p.otros_items += n(r.unidades);
+    }
+  }
+  const comparativo_meses = Object.values(comparativoMesesMap).sort((a, b) => a.periodo.localeCompare(b.periodo));
 
   const mejoresCajas = [...cajas].sort((a, b) => b.utilidad - a.utilidad).slice(0, 8);
   const peoresCajas = [...cajas].filter((c) => c.autos_totales > 0).sort((a, b) => a.utilidad - b.utilidad).slice(0, 5);
 
   const capitalInventario = valorInventario;
   const utilidadTotalHist = await getOne(`
-    SELECT COALESCE(SUM(utilidad_bruta),0) AS u FROM ventas WHERE estado != 'cancelado'
+    SELECT COALESCE(SUM(vi.utilidad),0) AS u
+    FROM venta_items vi
+    JOIN ventas v ON v.id = vi.venta_id
+    LEFT JOIN inventario i ON i.id = vi.inventario_id
+    WHERE v.estado != 'cancelado'
+      AND NOT (
+        vi.inventario_id IS NULL
+        OR (COALESCE(vi.costo_unitario, 0) <= 0 AND COALESCE(i.costo_unitario, 0) <= 0)
+      )
   `);
 
   return {
-    // KPIs principales
+    periodo: {
+      mes: periodo.mes,
+      label: periodo.label,
+      desde: desdeMes,
+      hasta: hastaMes,
+      es_mes_actual: esMesActual,
+      mes_anterior: periodoPrev.mes,
+      mes_anterior_label: periodoPrev.label,
+      opciones: ultimosMeses(12).map((m) => ({ mes: m.mes, label: m.label })),
+    },
+    comparacion: {
+      mes_anterior: {
+        ventas_inventario: invPrev.ingresos,
+        utilidad_inventario: invPrev.utilidad,
+        utilidad_neta: utilidadNetaPrev,
+        autos: metricasPrev.auto_caja.unidades,
+        otros_items: metricasPrev.otro_item.unidades,
+        manual_ingresos: manualPrev.ingresos,
+      },
+      variacion: {
+        ventas_pct: variacion(inv.ingresos, invPrev.ingresos),
+        utilidad_pct: variacion(inv.utilidad, invPrev.utilidad),
+        utilidad_neta_pct: variacion(utilidadNetaMes, utilidadNetaPrev),
+        autos_pct: variacion(metricasMes.auto_caja.unidades, metricasPrev.auto_caja.unidades),
+        otros_pct: variacion(metricasMes.otro_item.unidades, metricasPrev.otro_item.unidades),
+      },
+    },
+
+    // KPIs principales (datos reales con inventario)
     ventas_hoy: n(ventasHoy?.total),
-    ventas_mes: n(ventasMes?.total),
-    utilidad_bruta_mes: n(ventasMes?.utilidad_bruta),
+    ventas_mes: inv.ingresos,
+    ventas_mes_total: inv.ingresos + manual.ingresos,
+    ventas_manuales_mes: manual.ingresos,
+    utilidad_bruta_mes: inv.utilidad,
     utilidad_neta_mes: utilidadNetaMes,
     dinero_caja: dineroCaja,
     valor_inventario: capitalInventario,
     efectivo,
-    autos_vendidos_mes: autosVendidos,
-    cajas_cerradas_vendidas_mes: cajasVendidas,
+    autos_vendidos_mes: metricasMes.auto_caja.unidades,
+    otros_items_vendidos_mes: metricasMes.otro_item.unidades,
+    manual_unidades_mes: manual.unidades,
+    cajas_cerradas_vendidas_mes: cajasCerradasMes,
+    metricas_categoria: metricasMes,
     margen_promedio: margenMes,
     gastos_mes: n(gastosMes?.total),
     ticket_promedio: velocidad.ticket_promedio,
@@ -769,6 +961,29 @@ export async function obtenerDashboardDecisiones() {
         utilidad: n(r.utilidad),
         cantidad: n(r.cantidad),
       })),
+      ventas_por_dia_anterior: ventasPorDiaPrev.map((r) => ({
+        fecha: r.fecha,
+        ventas: n(r.ventas),
+        utilidad: n(r.utilidad),
+        cantidad: n(r.cantidad),
+      })),
+      comparativo_meses,
+      mes_vs_anterior: {
+        actual: {
+          label: periodo.label,
+          ventas: inv.ingresos,
+          utilidad: inv.utilidad,
+          autos: metricasMes.auto_caja.unidades,
+          otros: metricasMes.otro_item.unidades,
+        },
+        anterior: {
+          label: periodoPrev.label,
+          ventas: invPrev.ingresos,
+          utilidad: invPrev.utilidad,
+          autos: metricasPrev.auto_caja.unidades,
+          otros: metricasPrev.otro_item.unidades,
+        },
+      },
       gastos_por_categoria: gastosPorCat.map((r) => ({
         categoria: r.categoria,
         total: n(r.total),

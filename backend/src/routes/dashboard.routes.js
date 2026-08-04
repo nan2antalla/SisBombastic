@@ -5,11 +5,11 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 const router = Router();
 
 router.get('/', asyncHandler(async (req, res) => {
-  res.json(await dashboardService.obtenerDashboardDecisiones());
+  res.json(await dashboardService.obtenerDashboardDecisiones({ mes: req.query.mes }));
 }));
 
 router.get('/decisiones', asyncHandler(async (req, res) => {
-  res.json(await dashboardService.obtenerDashboardDecisiones());
+  res.json(await dashboardService.obtenerDashboardDecisiones({ mes: req.query.mes }));
 }));
 
 router.get('/cajas', asyncHandler(async (req, res) => {

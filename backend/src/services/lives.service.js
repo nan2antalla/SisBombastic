@@ -113,7 +113,8 @@ export async function sincronizarLive(id) {
         JOIN ventas vx ON vx.id = vi.venta_id
         LEFT JOIN inventario i ON i.id = vi.inventario_id
         WHERE vx.live_id = $1 AND vx.estado != 'cancelado'
-          AND COALESCE(i.tipo_item, 'auto_individual') = 'auto_individual'
+          AND i.tipo_item = 'auto_individual'
+          AND i.parent_id IS NOT NULL
       ), 0) AS autos_vendidos
     FROM ventas v
     WHERE v.live_id = $1 AND v.estado != 'cancelado'

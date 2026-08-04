@@ -45,21 +45,34 @@ function Section({ title, subtitle, children }) {
   );
 }
 
+function DeltaBadge({ pct }) {
+  if (pct == null || Number.isNaN(pct)) return null;
+  const v = Number(pct);
+  const up = v >= 0;
+  return (
+    <span className={`text-[10px] ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+      {up ? '▲' : '▼'} {Math.abs(v).toFixed(1)}% vs mes ant.
+    </span>
+  );
+}
+
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('resumen');
+  const [mesSeleccionado, setMesSeleccionado] = useState('');
   const [buscaCaja, setBuscaCaja] = useState('');
   const [buscaProveedor, setBuscaProveedor] = useState('');
   const [buscaCliente, setBuscaCliente] = useState('');
 
   useEffect(() => {
-    api.dashboard()
+    setLoading(true);
+    api.dashboard(mesSeleccionado || undefined)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [mesSeleccionado]);
 
   const cajasFiltradas = (data?.cajas_todas || []).filter((c) => {
     const q = buscaCaja.toLowerCase();
@@ -119,8 +132,30 @@ export default function Dashboard() {
     <div>
       <PageHeader
         title="Dashboard de decisiones"
-        subtitle="Métricas para saber qué comprar, qué vende y qué te genera dinero"
+        subtitle={`Métricas para saber qué comprar, qué vende y qué te genera dinero${data.periodo?.label ? ` · ${data.periodo.label}` : ''}`}
       />
+
+      <div className="card mb-6 flex flex-wrap items-end gap-4">
+        <div>
+          <label className="stat-label block mb-1">Período</label>
+          <select
+            value={data.periodo?.mes || mesSeleccionado}
+            onChange={(e) => setMesSeleccionado(e.target.value)}
+            className="min-w-[180px]"
+          >
+            {(data.periodo?.opciones || []).map((o) => (
+              <option key={o.mes} value={o.mes}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        {data.comparacion?.variacion && (
+          <div className="text-xs text-gray-400">
+            Comparado con {data.periodo?.mes_anterior_label}: ventas{' '}
+            <DeltaBadge pct={data.comparacion.variacion.ventas_pct} /> · autos{' '}
+            <DeltaBadge pct={data.comparacion.variacion.autos_pct} />
+          </div>
+        )}
+      </div>
 
       <div className="flex flex-wrap gap-2 mb-6">
         {tabs.map((t) => (
@@ -139,16 +174,29 @@ export default function Dashboard() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
             <StatCard label="Ventas hoy" value={formatMoney(data.ventas_hoy)} amount={data.ventas_hoy} />
-            <StatCard label="Ventas del mes" value={formatMoney(data.ventas_mes)} amount={data.ventas_mes} />
+            <StatCard
+              label="Ventas del mes (inventario)"
+              value={formatMoney(data.ventas_mes)}
+              amount={data.ventas_mes}
+              hint={<DeltaBadge pct={data.comparacion?.variacion?.ventas_pct} />}
+            />
+            <StatCard
+              label="Ventas manuales (sin inversión)"
+              value={formatMoney(data.ventas_manuales_mes)}
+              amount={data.ventas_manuales_mes}
+              hint="No entran en ROI ni utilidad real"
+            />
             <StatCard
               label="Utilidad bruta mes"
               value={<Money value={data.utilidad_bruta_mes} signed />}
               amount={data.utilidad_bruta_mes}
+              hint={<DeltaBadge pct={data.comparacion?.variacion?.utilidad_pct} />}
             />
             <StatCard
               label="Utilidad neta mes"
               value={<Money value={data.utilidad_neta_mes} signed />}
               amount={data.utilidad_neta_mes}
+              hint={<DeltaBadge pct={data.comparacion?.variacion?.utilidad_neta_pct} />}
             />
             <StatCard
               label="Dinero esperado (banco)"
@@ -158,14 +206,19 @@ export default function Dashboard() {
             />
             <StatCard label="Capital en inventario" value={formatMoney(data.valor_inventario)} hint="Dinero trabado en stock" />
             <StatCard
-              label="Autos vendidos (mes)"
+              label="Autos vendidos (de caja)"
               value={data.autos_vendidos_mes}
-              hint="Solo autos individuales (sin cajas cerradas)"
+              hint="Solo autos que salieron de cajas abiertas"
             />
             <StatCard
-              label="Cajas cerradas vendidas"
-              value={data.cajas_cerradas_vendidas_mes ?? 0}
-              hint="Cases vendidos completos, sin abrir"
+              label="Otros ítems vendidos"
+              value={data.otros_items_vendidos_mes ?? 0}
+              hint="Cajas cerradas, accesorios, autos sueltos, etc."
+            />
+            <StatCard
+              label="Ítems manuales"
+              value={data.manual_unidades_mes ?? 0}
+              hint="Sin inventario o sin costo — separados"
             />
             <StatCard
               label="Margen promedio"
@@ -183,6 +236,7 @@ export default function Dashboard() {
               label="Utilidad histórica"
               value={<Money value={data.utilidad_historica} signed />}
               amount={data.utilidad_historica}
+              hint="Solo ventas con inventario y costo"
             />
             <StatCard
               label="ROI del mes"
@@ -190,11 +244,13 @@ export default function Dashboard() {
               amount={data.roi_mensual?.mes_actual?.roi_sobre_inversion}
               hint="Utilidad neta / capital invertido"
             />
-            <StatCard
-              label="Proyección ventas mes"
-              value={formatMoney(data.predicciones?.proyeccion_cierre_mes?.ventas)}
-              hint={`Tendencia: ${data.predicciones?.interpretacion || '—'}`}
-            />
+            {data.periodo?.es_mes_actual && (
+              <StatCard
+                label="Proyección ventas mes"
+                value={formatMoney(data.predicciones?.proyeccion_cierre_mes?.ventas)}
+                hint={`Tendencia: ${data.predicciones?.interpretacion || '—'}`}
+              />
+            )}
           </div>
 
           <div className="grid md:grid-cols-3 gap-4 mb-6">
@@ -268,6 +324,9 @@ export default function Dashboard() {
         const hist = data.roi_mensual?.historico || [];
         return (
           <div className="space-y-6">
+            <p className="text-sm text-gray-400">
+              ROI calculado solo con ventas de inventario (con costo). Ventas manuales: {formatMoney(r.ventas_manuales)} ({r.unidades_manuales || 0} und.) — excluidas.
+            </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <StatCard
                 label="ROI sobre inversión"
@@ -291,7 +350,10 @@ export default function Dashboard() {
                 amount={r.utilidad_neta}
               />
             </div>
-            <div className="grid md:grid-cols-3 gap-4">
+            <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <StatCard label="Ventas inventario" value={formatMoney(r.ventas_inventario)} />
+              <StatCard label="Autos de caja" value={r.autos_de_caja ?? 0} />
+              <StatCard label="Otros ítems" value={r.otros_items ?? 0} />
               <StatCard label="Compras del mes" value={formatMoney(r.compras_del_mes)} />
               <StatCard label="Reinversiones (caja)" value={formatMoney(r.reinversiones)} negative />
               <StatCard label="Capital usado en ROI" value={formatMoney(r.capital_usado)} hint="Base del cálculo" />
@@ -299,9 +361,10 @@ export default function Dashboard() {
             <Section title="Cómo se calcula" subtitle={r.formula}>
               <p className="text-sm text-gray-400">
                 Si este mes no hubo compras, se usa el valor del inventario o el costo de lo vendido como base.
+                Las ventas manuales sin inversión no distorsionan el ROI.
               </p>
             </Section>
-            <Section title="ROI histórico (últimos meses)" subtitle="Utilidad neta / capital del mes">
+            <Section title="ROI histórico (últimos meses)" subtitle="Utilidad neta inventario / capital del mes">
               {hist.length === 0 ? (
                 <p className="text-sm text-gray-400">Sin histórico aún</p>
               ) : (
@@ -310,7 +373,10 @@ export default function Dashboard() {
                     <thead>
                       <tr>
                         <th>Mes</th>
-                        <th>Ventas</th>
+                        <th>Ventas inv.</th>
+                        <th>Manual</th>
+                        <th>Autos</th>
+                        <th>Otros</th>
                         <th>Utilidad neta</th>
                         <th>Capital</th>
                         <th>ROI</th>
@@ -321,6 +387,9 @@ export default function Dashboard() {
                         <tr key={h.periodo}>
                           <td>{h.periodo}</td>
                           <td>{formatMoney(h.ventas)}</td>
+                          <td className="text-gray-400">{formatMoney(h.ventas_manual)}</td>
+                          <td>{h.autos}</td>
+                          <td>{h.otros_items}</td>
                           <td><Money value={h.utilidad_neta} signed /></td>
                           <td>{formatMoney(h.capital_invertido)}</td>
                           <td><Money value={h.roi} percent signed /></td>
@@ -339,6 +408,16 @@ export default function Dashboard() {
         const p = data.predicciones || {};
         const cierre = p.proyeccion_cierre_mes || {};
         const prox = p.proximos_7_dias || {};
+        if (!data.periodo?.es_mes_actual) {
+          return (
+            <Section title="Predicciones" subtitle="Solo disponibles para el mes en curso">
+              <p className="text-sm text-gray-400">
+                Estás viendo {data.periodo?.label}. Totales reales del mes: ventas inventario {formatMoney(cierre.ventas)},
+                utilidad neta <Money value={cierre.utilidad_neta} signed />, autos {cierre.autos ?? 0}.
+              </p>
+            </Section>
+          );
+        }
         return (
           <div className="space-y-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -496,7 +575,7 @@ export default function Dashboard() {
         );
       })()}
 
-      {tab === 'graficos' && <DashboardCharts graficos={data.graficos} />}
+      {tab === 'graficos' && <DashboardCharts graficos={data.graficos} periodo={data.periodo} />}
 
       {tab === 'clientes' && (
         <div className="space-y-6">
@@ -516,6 +595,11 @@ export default function Dashboard() {
             <div className="card">
               <p className="stat-label">Unidades vendidas</p>
               <p className="text-2xl font-bold">{data.clientes?.resumen?.unidades_totales ?? 0}</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Autos caja: {data.clientes?.resumen?.autos_caja_totales ?? 0} ·
+                Otros: {data.clientes?.resumen?.otros_items_totales ?? 0} ·
+                Manual: {data.clientes?.resumen?.manual_totales ?? 0}
+              </p>
             </div>
             <div className="card">
               <p className="stat-label">Más se lleva</p>
@@ -550,17 +634,18 @@ export default function Dashboard() {
           </div>
 
           <div className="grid lg:grid-cols-3 gap-6">
-            <Section title="Top clientes por compra" subtitle="Los que más dinero compran">
+            <Section title="Top clientes por compra" subtitle="Desglose autos de caja vs otros ítems">
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Cliente</th><th>Und.</th><th>Total</th><th>Ticket</th></tr></thead>
+                  <thead><tr><th>Cliente</th><th>Autos</th><th>Otros</th><th>Manual</th><th>Total</th></tr></thead>
                   <tbody>
                     {clientesTopCompras.map((c, i) => (
                       <tr key={`tc-${c.cliente_id}-${i}`}>
                         <td>{c.cliente_nombre}</td>
-                        <td>{c.unidades}</td>
+                        <td>{c.autos_caja ?? 0}</td>
+                        <td>{c.otros_items ?? 0}</td>
+                        <td className="text-gray-400">{c.manual_unidades ?? 0}</td>
                         <td>{formatMoney(c.total_comprado)}</td>
-                        <td>{formatMoney(c.ticket_promedio)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -568,16 +653,17 @@ export default function Dashboard() {
               </div>
             </Section>
 
-            <Section title="Top por utilidad" subtitle="Los que más ganancia dejan">
+            <Section title="Top por utilidad" subtitle="Utilidad de inventario (sin manual)">
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Cliente</th><th>Utilidad</th><th>Und.</th><th>Margen</th></tr></thead>
+                  <thead><tr><th>Cliente</th><th>Utilidad</th><th>Autos</th><th>Otros</th><th>Margen</th></tr></thead>
                   <tbody>
                     {clientesTopUtilidad.map((c, i) => (
                       <tr key={`tu-${c.cliente_id}-${i}`}>
                         <td>{c.cliente_nombre}</td>
-                        <td><Money value={c.utilidad_total} signed /></td>
-                        <td>{c.unidades}</td>
+                        <td><Money value={c.utilidad_inventario ?? c.utilidad_total} signed /></td>
+                        <td>{c.autos_caja ?? 0}</td>
+                        <td>{c.otros_items ?? 0}</td>
                         <td><Money value={c.margen_promedio} percent signed /></td>
                       </tr>
                     ))}
@@ -586,16 +672,17 @@ export default function Dashboard() {
               </div>
             </Section>
 
-            <Section title="Quién más se lleva" subtitle="Clientes con más unidades compradas">
+            <Section title="Quién más se lleva" subtitle="Por unidades totales">
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Cliente</th><th>Und.</th><th>Und/compra</th><th>Total</th></tr></thead>
+                  <thead><tr><th>Cliente</th><th>Autos</th><th>Otros</th><th>Manual</th><th>Total Bs</th></tr></thead>
                   <tbody>
                     {clientesTopUnidades.map((c, i) => (
                       <tr key={`un-${c.cliente_id}-${i}`}>
                         <td>{c.cliente_nombre}</td>
-                        <td className="font-semibold text-[#ffcc00]">{c.unidades}</td>
-                        <td>{Number(c.unidades_por_compra || 0).toFixed(1)}</td>
+                        <td className="text-[#ffcc00]">{c.autos_caja ?? 0}</td>
+                        <td>{c.otros_items ?? 0}</td>
+                        <td className="text-gray-400">{c.manual_unidades ?? 0}</td>
                         <td>{formatMoney(c.total_comprado)}</td>
                       </tr>
                     ))}
